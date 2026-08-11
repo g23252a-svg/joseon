@@ -829,8 +829,6 @@ function mods(){
   m.defKor*=m.def;
   return m;
 }
-/* 옛 이름 — 부르던 자리가 여럿이라 남겨 둔다 */
-function polMods(){ return mods(); }
 
 function endTurn(){
   if(G.ended || G.popup || G.report) return;
@@ -1137,8 +1135,10 @@ function dipTurn(B){
     const d=dipOf(k); if(!d) return;
     if(d.truce>0) d.truce--;
     if(d.envoy>0) d.envoy--;
-    const 기준=relBase(k);
-    d.rel = clamp(d.rel + clamp((기준-d.rel)*0.10, -6, 6), -100, 100);
+    // 사신이 머무는 동안에는 사이가 제자리로 돌아가는 속도가 느리다.
+    // 올려 놓은 사이를 붙들어 두려면 사람을 보내 두어야 한다.
+    const 기준=relBase(k), 속도=d.envoy>0? 0.05 : 0.10;
+    d.rel = clamp(d.rel + clamp((기준-d.rel)*속도, -6, 6), -100, 100);
 
     if(d.war){
       d.warYears++;
@@ -1331,7 +1331,7 @@ const ACTIONS=[
     run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true; log(p.nm+'의 성을 쌓았다.'); } },
   { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.05,
     desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 5%까지만. 군량을 먹는다.',
-    run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/polMods().popMo));
+    run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/mods().popMo));
       p.unrest=clamp(p.unrest+3,0,100);
       log(p.nm+'에서 군사를 모았다.'); } },
   { id:'jin', nm:'진휼', cost:90, adm:1, need:p=>p.nat==='kor'&&p.unrest>0,
@@ -1354,7 +1354,7 @@ const ACTIONS=[
     run:p=>{ invade(p); } }
 ];
 function actCost(a,p){
-  const M=polMods();
+  const M=mods();
   let c=a.cost*(1+G.era*0.8);          // 시대가 오르면 값도 오른다
   if(a.id==='mo') c*=M.moCost*tagVal(p,'moCost',1);
   else if(a.id==='chuk') c*=M.fortCost*M.bldCost*tagVal(p,'fortCost',1);
@@ -1470,7 +1470,8 @@ function dipActs(k){
     { id:'envoy', nm:'사신', adm:1, cost:Math.round(70*물가),
       can:()=>!!d,
       desc:()=>{ const g=Math.round(5+bestDip()/9);
-        return '사이 +'+g+'.  외교에 밝은 신하가 있으면 더 오른다 (지금 '+bestDip()+').'; },
+        return '사이 +'+g+'.  외교에 밝은 신하가 있으면 더 오른다 (지금 '+bestDip()+').'
+             + '  세 해 동안 사이가 제자리로 돌아가는 속도가 절반이 된다.'; },
       run:()=>{ const g=5+bestDip()/9;
         d.rel=clamp(d.rel+g,-100,100); d.envoy=3;
         log(nm()+'에 사신을 보냈다.'); } },
@@ -2414,6 +2415,7 @@ function sideDiplomacy(g,x,y,w){
     let cx2=x, cy2=yy+24;
     if(d.war)     cx2+=chip(g,cx2,cy2,'전쟁','#c4534a');
     if(d.truce>0) cx2+=chip(g,cx2,cy2,'휴전 '+d.truce+'년','#9fd0e8');
+    if(d.envoy>0)  cx2+=chip(g,cx2,cy2,'사신 '+d.envoy+'년','#9fd0e8');
     if(d.tribute) cx2+=chip(g,cx2,cy2,'세폐','#c9a24a');
     if(d.trade)   cx2+=chip(g,cx2,cy2,'통상','#8fa86a');
     if(d.ally)    cx2+=chip(g,cx2,cy2,'동맹','#b79fe0');
