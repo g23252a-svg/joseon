@@ -67,9 +67,21 @@ function fakeCanvas(w, h){
     width: w || 1280, height: h || 720, style: {},
     getContext(){ return this.__ctx || (this.__ctx = noopCanvasContext()); },
     getBoundingClientRect(){ return { left:0, top:0, width:this.width, height:this.height }; },
+    addEventListener(){}, removeEventListener(){},
     toDataURL(){ return ''; }
   };
   return c;
+}
+/* 캔버스 밖의 조각들 — 고을 선택 상자와 화면 읽기용 알림 */
+function fakeElement(tag){
+  return {
+    tagName: (tag || 'div').toUpperCase(), style: {}, children: [],
+    hidden: false, value: '', textContent: '', disabled: false,
+    addEventListener(){}, removeEventListener(){},
+    appendChild(child){ this.children.push(child); return child; },
+    setAttribute(){}, getAttribute(){ return null; },
+    getBoundingClientRect(){ return { left:0, top:0, width:0, height:0 }; }
+  };
 }
 
 function makeSandbox(rng){
@@ -94,8 +106,12 @@ function makeSandbox(rng){
       clear: () => store.clear()
     },
     document: {
-      getElementById(){ return fakeCanvas(1280, 720); },
-      createElement(tag){ return tag === 'canvas' ? fakeCanvas(1, 1) : { style:{} }; }
+      __els: {},
+      getElementById(id){
+        if(id === 'cv') return this.__cv || (this.__cv = fakeCanvas(1280, 720));
+        return this.__els[id] || (this.__els[id] = fakeElement('div'));
+      },
+      createElement(tag){ return tag === 'canvas' ? fakeCanvas(1, 1) : fakeElement(tag); }
     },
     Image: class { constructor(){ this.width = 0; this.height = 0; }
                    set src(v){ this._src = v; } get src(){ return this._src; } },
@@ -189,6 +205,8 @@ function uiCheck(){
   });
   shot('놀이 · 민심 보기', () => { G.view = 'unrest'; });
   shot('놀이 · 정치 지도', () => { G.mapMode = 'political'; G.view = 'nat'; });
+  shot('놀이 · 동아시아 전체', () => { G.mapFocus = 'all'; });
+  shot('놀이 · 한반도 확대', () => { G.mapFocus = 'korea'; });
 
   /* 한 해를 넘긴 뒤의 창들 */
   api.call('endTurn');
@@ -278,7 +296,7 @@ function saveCheck(){
 function snapshot(G){
   return {
     year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol,
-    tab:G.tab, sel:G.sel, view:G.view,
+    tab:G.tab, sel:G.sel, view:G.view, mapMode:G.mapMode, mapFocus:G.mapFocus,
     policies:G.policies, polSince:G.polSince, factions:G.factions,
     scores:G.scores, evDone:G.evDone,
     '연구':{ pt:G.res.pt, done:G.res.done },

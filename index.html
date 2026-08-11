@@ -10,10 +10,36 @@
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;}
   #wrap{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);}
   canvas{display:block;background:#0a0b0e;box-shadow:0 0 60px rgba(0,0,0,.9);}
+  /* 작은 화면·손가락에서는 고을을 정확히 찍기 어렵다.
+     캔버스 밖에 진짜 <select> 를 하나 두어 목록에서 고르게 한다. */
+  #province-tool{display:none;position:fixed;z-index:10;left:50%;bottom:max(12px,env(safe-area-inset-bottom));
+    transform:translateX(-50%);align-items:center;gap:10px;width:min(430px,calc(100vw - 24px));
+    box-sizing:border-box;padding:8px 10px;background:rgba(14,16,20,.97);color:#e0bd76;
+    border:1px solid rgba(224,189,118,.58);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.55);}
+  #province-tool[hidden]{display:none!important;}
+  #province-tool label{flex:0 0 auto;font-size:14px;font-weight:700;white-space:nowrap;}
+  #province-select{min-width:0;flex:1;height:44px;padding:0 38px 0 12px;border:1px solid rgba(224,189,118,.5);
+    border-radius:6px;background:#20242b;color:#f2ead7;font:16px "Nanum Myeongjo","Batang","Malgun Gothic",serif;}
+  #province-select:focus-visible{outline:3px solid rgba(231,224,240,.8);outline-offset:2px;}
+  .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;
+    overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
+  @media (max-width:900px),(max-height:620px),(pointer:coarse){
+    #province-tool:not([hidden]){display:flex;}
+  }
+  @media (orientation:landscape) and (max-height:620px){
+    #province-tool{left:12px;top:max(10px,env(safe-area-inset-top));bottom:auto;transform:none;width:min(360px,calc(100vw - 24px));}
+  }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="cv" width="1280" height="720"></canvas></div>
+<div id="province-tool" hidden>
+  <label for="province-select">고을 바로 선택</label>
+  <select id="province-select" aria-label="고을 바로 선택">
+    <option value="">고을을 고르시오</option>
+  </select>
+</div>
+<output id="selection-status" class="sr-only" aria-live="polite"></output>
 <script src="assets/map_geo.js"></script>
 <script>
 "use strict";
@@ -25,6 +51,8 @@
 const VERSION = '0.3.0';
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
+const MAP_FOCUS_PARAM=new URLSearchParams(location.search).get('focus');
+const START_MAP_FOCUS=MAP_FOCUS_PARAM==='all'?'all':'korea';
 
 const CFG = { W:1280, H:720, CELL:12, GX:8, GY:62, GW:74, GH:40,
               SAVE:'donga_save_v5', RECORDS:'donga_records_v1' };
@@ -40,29 +68,44 @@ function num(n){ return Math.round(n).toLocaleString('ko-KR'); }
 
 /* ---------------------------------------------------------------- 입력 */
 const Key={pressed:{},down:{}};
-addEventListener('keydown',e=>{ if(!Key.down[e.code])Key.pressed[e.code]=true; Key.down[e.code]=true;
+addEventListener('keydown',e=>{
+  // 캔버스 밖의 <select> 를 다루는 동안에는 놀이 조작으로 새지 않게 한다
+  const tag=e.target&&e.target.tagName;
+  if(['INPUT','SELECT','TEXTAREA','BUTTON'].includes(tag)||(e.target&&e.target.isContentEditable)) return;
+  if(!Key.down[e.code])Key.pressed[e.code]=true; Key.down[e.code]=true;
   if(['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
 addEventListener('keyup',e=>{ Key.down[e.code]=false; });
-const Mouse={x:0,y:0,click:false,rclick:false,wheel:0};
+const Mouse={x:0,y:0,click:false,rclick:false,wheel:0,touch:false};
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const provinceTool=document.getElementById('province-tool');
+const provinceSelect=document.getElementById('province-select');
+const selectionStatus=document.getElementById('selection-status');
 function toCanvas(e){ const r=cv.getBoundingClientRect();
   return { x:(e.clientX-r.left)*(CFG.W/r.width), y:(e.clientY-r.top)*(CFG.H/r.height) }; }
-addEventListener('mousemove',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y; });
-addEventListener('mousedown',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y;
-  if(e.button===0) Mouse.click=true; else Mouse.rclick=true; });
-addEventListener('contextmenu',e=>e.preventDefault());
-addEventListener('wheel',e=>{ Mouse.wheel+=Math.sign(e.deltaY)*38; e.preventDefault(); },{passive:false});
-/* 손가락 — 끌면 굴리고, 거의 안 움직였으면 누른 것으로 본다 */
+/* 창이 아니라 캔버스에 건다 — 그래야 아래의 고을 선택 상자가 제 노릇을 한다 */
+cv.addEventListener('mousemove',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=false; });
+cv.addEventListener('mousedown',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y;
+  Mouse.touch=false; if(e.button===0) Mouse.click=true; else Mouse.rclick=true; });
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('wheel',e=>{ Mouse.wheel+=Math.sign(e.deltaY)*38; e.preventDefault(); },{passive:false});
+/* 손가락 — 끌면 굴리고, 거의 안 움직였으면 누른 것으로 본다.
+   움직인 거리는 캔버스 좌표가 아니라 화면 좌표로 잰다 — 확대해도 기준이 같아야 한다. */
 let TCH=null;
-addEventListener('touchstart',e=>{ if(!e.touches[0])return; const p=toCanvas(e.touches[0]);
-  Mouse.x=p.x; Mouse.y=p.y; TCH={x:p.x,y:p.y,moved:0}; e.preventDefault(); },{passive:false});
-addEventListener('touchmove',e=>{ if(!TCH||!e.touches[0])return; const p=toCanvas(e.touches[0]);
-  Mouse.wheel += (TCH.y-p.y); TCH.moved += Math.abs(TCH.y-p.y)+Math.abs(TCH.x-p.x);
+cv.addEventListener('touchstart',e=>{ if(!e.touches[0])return; const p=toCanvas(e.touches[0]);
+  const t=e.touches[0]; Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=true;
+  TCH={x:p.x,y:p.y,startX:t.clientX,startY:t.clientY,moved:false}; e.preventDefault(); },{passive:false});
+cv.addEventListener('touchmove',e=>{ if(!TCH||!e.touches[0])return; const t=e.touches[0], p=toCanvas(t);
+  Mouse.wheel += (TCH.y-p.y);
+  if(Math.hypot(t.clientX-TCH.startX,t.clientY-TCH.startY)>10) TCH.moved=true;
   TCH.x=p.x; TCH.y=p.y; Mouse.x=p.x; Mouse.y=p.y; e.preventDefault(); },{passive:false});
-addEventListener('touchend',e=>{ if(TCH && TCH.moved<8) Mouse.click=true; TCH=null; },{passive:false});
+cv.addEventListener('touchend',e=>{ if(TCH && !TCH.moved) Mouse.click=true; TCH=null; },{passive:false});
 function resize(){ const s=Math.min(innerWidth/CFG.W, innerHeight/CFG.H);
   cv.style.width=(CFG.W*s)+'px'; cv.style.height=(CFG.H*s)+'px'; }
 addEventListener('resize',resize); resize();
+provinceSelect.addEventListener('change',()=>{
+  if(!G||!provinceSelect.value) return;
+  G.sel=provinceSelect.value; G.mapFocus='korea';
+});
 
 /* ================================================================
    에셋 슬롯
@@ -486,12 +529,38 @@ const SUR=['김','이','박','최','정','강','조','윤','장','임','한','�
 const GIV=['정','성','도','현','우','재','민','석','태','헌','영','규','호','진','수','철','병','환','기','승','원','준','만','경'];
 function makeName(){ return pick(SUR)+pick(GIV)+pick(GIV); }
 
+/* 고을 바로 선택 — 캔버스 밖의 진짜 선택 상자.
+   작은 화면이나 손가락으로는 지도를 정확히 찍기 어렵다.
+   화면 읽기 프로그램에도 지금 무엇을 골랐는지 알린다. */
+let provinceOptionsReady=false;
+function ensureProvinceOptions(){
+  if(provinceOptionsReady) return;
+  PROVDEF.filter(P=>P.nat==='kor').forEach(P=>{
+    const option=document.createElement('option');
+    option.value=P.id; option.textContent=P.nm;
+    provinceSelect.appendChild(option);
+  });
+  provinceOptionsReady=true;
+}
+function syncProvinceTool(){
+  const show=SCENE==='play' && !MENU && !G.popup && !G.report;
+  provinceTool.hidden=!show;
+  if(!show) return;
+  ensureProvinceOptions();
+  const selected=G.sel&&G.provs[G.sel]&&G.provs[G.sel].nat==='kor'?G.sel:'';
+  if(provinceSelect.value!==selected) provinceSelect.value=selected;
+  const selectedName=G.sel&&G.provs[G.sel]?G.provs[G.sel].nm:'';
+  const announcement=selectedName?selectedName+' 고을 선택됨':'선택된 고을 없음';
+  if(selectionStatus.textContent!==announcement) selectionStatus.textContent=announcement;
+}
+
 /* ================================================================
    상태
    ================================================================ */
 let G=null;
 function newGame(){
-  G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, log:[], tab:'국정',
+  G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, mapFocus:START_MAP_FOCUS,
+      log:[], tab:'국정',
       sel:null, hover:null, nat:'kor', ended:false,
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
@@ -1568,6 +1637,7 @@ function actBtn(g,x,y,w,h,label,admCost,baseCost,ok,fn,tip){
 function draw(){
   const g=ctx;
   HIT.length=0; MODAL=-1;
+  syncProvinceTool();
   g.fillStyle='#0a0b0e'; g.fillRect(0,0,CFG.W,CFG.H);
   if(SCENE==='title'){
     drawTitle(g);
@@ -1839,6 +1909,25 @@ const MAP_NAMES={
   ryuk:'유구',taiw:'타이완'
 };
 
+/* 전체 판은 유지하되, 놀이의 중심인 한반도는 기본으로 세 배 확대한다.
+   지도판·경계·이름은 그대로 두고 보는 창만 옮긴다 — 규칙은 하나도 건드리지 않는다. */
+const MAP_VIEWS={
+  all:{zoom:1,x:0,y:0},
+  korea:{zoom:3,x:470,y:136}
+};
+function activeMapView(){ return MAP_VIEWS[G&&G.mapFocus==='all'?'all':'korea']; }
+function mapScreenToLocal(x,y){
+  if(x<CFG.GX||y<CFG.GY||x>CFG.GX+MAP_GEO.width||y>CFG.GY+MAP_GEO.height) return null;
+  const V=activeMapView();
+  return {x:(x-CFG.GX)/V.zoom+V.x,y:(y-CFG.GY)/V.zoom+V.y};
+}
+function beginMapView(g){
+  const V=activeMapView();
+  g.save(); g.beginPath(); g.rect(CFG.GX,CFG.GY,MAP_GEO.width,MAP_GEO.height); g.clip();
+  g.translate(CFG.GX,CFG.GY); g.scale(V.zoom,V.zoom); g.translate(-CFG.GX-V.x,-CFG.GY-V.y);
+  return V;
+}
+
 function ensureMapVis(){
   if(MAPVIS) return;
   if(!window.MAP_GEO) throw new Error('assets/map_geo.js를 불러오지 못했습니다.');
@@ -1906,23 +1995,34 @@ function ensureCloudLayer(){
   }); MAPCLOUDS=c;
 }
 
+/* 어느 고을을 짚었는가.
+   좁은 섬을 손가락으로 찍기는 어렵다. 그래서 이름표에서 가장 가까운 고을을 먼저 보고,
+   그것이 없을 때만 실제 경계 안쪽인지 따진다. 잡히는 반경은 손가락이냐 마우스냐와
+   화면이 얼마나 줄어 있느냐에 따라 달라진다. */
 function provinceAtPoint(x,y){
-  if(x<CFG.GX||y<CFG.GY||x>CFG.GX+MAP_GEO.width||y>CFG.GY+MAP_GEO.height) return null;
-  ensureMapVis(); const lx=x-CFG.GX, ly=y-CFG.GY;
+  const point=mapScreenToLocal(x,y); if(!point) return null;
+  ensureMapVis(); const lx=point.x, ly=point.y, V=activeMapView();
+  const cssScale=Math.max(.1,cv.getBoundingClientRect().width/CFG.W);
+  const hitRadius=clamp((Mouse.touch?28:15)/cssScale,Mouse.touch?24:14,Mouse.touch?88:38);
+  let nearest=null, nearestDistance=Infinity;
+  for(const [id,R] of Object.entries(MAPVIS.regions)){
+    const distance=Math.hypot(lx-R.label[0],ly-R.label[1])*V.zoom;
+    const radius=hitRadius*(R.small?1.12:1);
+    if(distance<=radius&&distance<nearestDistance){ nearest=id; nearestDistance=distance; }
+  }
+  if(nearest) return nearest;
   for(const [id,R] of Object.entries(MAPVIS.regions)){
     const b=R.bbox;
     if(lx>=b[0]&&ly>=b[1]&&lx<=b[2]&&ly<=b[3]&&ctx.isPointInPath(R.path,lx,ly,'evenodd')) return id;
-  }
-  for(const [id,R] of Object.entries(MAPVIS.regions)){
-    if(Math.hypot(lx-R.label[0],ly-R.label[1])<=(R.small?12:9)) return id;
   }
   return null;
 }
 
 function drawSeaRoutes(g){
+  const inv=1/activeMapView().zoom;
   const routes=[['gyen','tsus'],['tsus','kyus'],['shan','hwan'],['zhej','ryuk'],['fuji','taiw']];
   g.save(); g.translate(CFG.GX,CFG.GY); g.setLineDash([4,7]); g.lineCap='round';
-  g.strokeStyle=G.mapMode==='political'?'rgba(105,157,181,.52)':'rgba(123,180,196,.30)'; g.lineWidth=1;
+  g.strokeStyle=G.mapMode==='political'?'rgba(105,157,181,.52)':'rgba(123,180,196,.30)'; g.lineWidth=inv;
   routes.forEach(([a,b],i)=>{
     const p=MAPVIS.regions[a].anchor, q=MAPVIS.regions[b].anchor;
     const mx=(p[0]+q[0])/2+(hash2(i,701)-.5)*22, my=(p[1]+q[1])/2-12-hash2(i,709)*16;
@@ -1950,9 +2050,18 @@ function drawMapModeControl(g){
   btn(g,x+w,y,w,h,'정치',G.mapMode==='political',()=>{G.mapMode='political';});
 }
 
+function drawMapFocusControl(g){
+  const w=82,h=27,x=CFG.GX+MAP_GEO.width-w*2-10,y=CFG.GY+10;
+  panel(g,x-3,y-3,w*2+6,h+6,.88);
+  btn(g,x,y,w,h,'한반도 확대',G.mapFocus==='korea',()=>{G.mapFocus='korea';});
+  btn(g,x+w,y,w,h,'동아시아',G.mapFocus==='all',()=>{G.mapFocus='all';});
+  if(inRect(Mouse,{x,y,w:w*2,h})) G.tip='F 키로 한반도 확대와 동아시아 전체 지도를 바꾼다.';
+}
+
 function drawMap(g){
   const C=CFG.CELL, MW=MAP_GEO.width, MH=MAP_GEO.height, political=G.mapMode==='political';
   ensureMapBase(); G.hover=provinceAtPoint(Mouse.x,Mouse.y);
+  const mapView=beginMapView(g), inv=1/mapView.zoom;
   g.drawImage(MAPBASE,0,0); drawSeaRoutes(g);
   g.save(); g.translate(CFG.GX,CFG.GY); g.clip(MAPVIS.land,'evenodd');
   Object.values(G.provs).forEach(P=>{
@@ -1966,49 +2075,67 @@ function drawMap(g){
   g.restore();
 
   g.save(); g.translate(CFG.GX,CFG.GY); g.lineCap='round'; g.lineJoin='round';
-  g.strokeStyle=political?'rgba(43,39,29,.47)':'rgba(34,36,29,.34)'; g.lineWidth=.72; g.stroke(MAPVIS.inner); g.restore();
+  g.strokeStyle=political?'rgba(43,39,29,.47)':'rgba(34,36,29,.34)'; g.lineWidth=.72*inv; g.stroke(MAPVIS.inner); g.restore();
   const nationEdge=new Path2D();
   MAPVIS.boundaries.forEach(e=>{ if(G.provs[e.a].nat!==G.provs[e.b].nat) nationEdge.addPath(e.path); });
   g.save(); g.translate(CFG.GX,CFG.GY); g.lineCap='round'; g.lineJoin='round';
-  g.strokeStyle='rgba(5,9,11,.63)'; g.lineWidth=3.5; g.stroke(nationEdge);
-  g.strokeStyle='rgba(224,213,174,.63)'; g.lineWidth=1.35; g.stroke(nationEdge);
-  g.shadowColor='rgba(0,0,0,.42)'; g.shadowBlur=4; g.strokeStyle='rgba(5,16,21,.76)'; g.lineWidth=3.3; g.stroke(MAPVIS.land);
-  g.shadowBlur=0; g.strokeStyle='rgba(220,211,168,.58)'; g.lineWidth=.9; g.stroke(MAPVIS.land); g.restore();
+  g.strokeStyle='rgba(5,9,11,.63)'; g.lineWidth=3.5*inv; g.stroke(nationEdge);
+  g.strokeStyle='rgba(224,213,174,.63)'; g.lineWidth=1.35*inv; g.stroke(nationEdge);
+  g.shadowColor='rgba(0,0,0,.42)'; g.shadowBlur=4*inv; g.strokeStyle='rgba(5,16,21,.76)'; g.lineWidth=3.3*inv; g.stroke(MAPVIS.land);
+  g.shadowBlur=0; g.strokeStyle='rgba(220,211,168,.58)'; g.lineWidth=.9*inv; g.stroke(MAPVIS.land); g.restore();
 
   if(G.sel&&MAPVIS.provOutline[G.sel]){
     g.save(); g.translate(CFG.GX,CFG.GY); g.shadowColor='rgba(172,190,247,.35)'; g.shadowBlur=7;
-    g.strokeStyle='#e7e0f0'; g.lineWidth=2; g.stroke(MAPVIS.provOutline[G.sel]); g.restore();
+    g.strokeStyle='#e7e0f0'; g.lineWidth=2*inv; g.stroke(MAPVIS.provOutline[G.sel]); g.restore();
   }
   if(G.hover&&G.hover!==G.sel&&MAPVIS.provOutline[G.hover]){
-    g.save(); g.translate(CFG.GX,CFG.GY); g.strokeStyle='rgba(255,244,203,.82)'; g.lineWidth=1.1;
+    g.save(); g.translate(CFG.GX,CFG.GY); g.strokeStyle='rgba(255,244,203,.82)'; g.lineWidth=1.1*inv;
     g.stroke(MAPVIS.provOutline[G.hover]); g.restore();
   }
   if(!political){ ensureCloudLayer(); g.save(); g.globalAlpha=.68; g.drawImage(MAPCLOUDS,CFG.GX,CFG.GY); g.restore(); }
-  drawCountryLabels(g);
+  // 확대하면 큰 국호는 화면 밖으로 나가 조각만 보인다. 그때는 걷는다.
+  if(G.mapFocus==='all') drawCountryLabels(g);
 
   Object.values(G.provs).forEach(P=>{
     const R=MAPVIS.regions[P.id], a=MAPVIS.anchors[P.id], cx=a.x, cy=a.y;
     P.cx=R.label[0]; P.cy=R.label[1];
-    const showName=!political||P.cap||P.id===G.sel||P.id===G.hover;
+    const showName=(G.mapFocus==='korea'&&P.nat==='kor')||!political||P.cap||P.id===G.sel||P.id===G.hover;
     if(showName){
       const ax=CFG.GX+R.anchor[0], ay=CFG.GY+R.anchor[1];
       if(!political&&Math.hypot(cx-ax,cy-ay)>9){
-        g.strokeStyle='rgba(221,214,190,.34)'; g.lineWidth=.55; g.beginPath(); g.moveTo(ax,ay); g.lineTo(cx,cy-3); g.stroke();
+        g.strokeStyle='rgba(221,214,190,.34)'; g.lineWidth=.55*inv; g.beginPath(); g.moveTo(ax,ay); g.lineTo(cx,cy-3); g.stroke();
       }
-      g.textAlign='center'; g.font=(R.small?'8.5px':'600 9.5px')+' serif';
-      g.lineWidth=2.3; g.strokeStyle='rgba(7,12,13,.84)'; g.strokeText(MAP_NAMES[P.id]||P.nm,cx,cy);
-      g.fillStyle='#eee4cd'; g.fillText(MAP_NAMES[P.id]||P.nm,cx,cy);
+      // 글자는 확대에 그대로 딸려 커지면 안 된다 — 화면에서 늘 비슷한 크기로 보이게 줄여 둔다.
+      // 확대했을 때 이웃 나라 이름까지 크게 쓰면 요동과 평북이 붙어 한 낱말로 읽힌다.
+      // 우리 고을은 크게, 이웃은 화면에서 작게 — 봐야 할 것과 알아만 둘 것을 가른다.
+      const labelSize = mapView.zoom>1
+        ? (P.nat==='kor'? (R.small?5.1:5.7) : (R.small?8.5:9.5)/mapView.zoom*1.2)
+        : (R.small?8.5:9.5);
+      const label=MAP_NAMES[P.id]||P.nm;
+      g.textAlign='center'; g.font=(R.small?'':'600 ')+labelSize+'px serif';
+      if(P.id===G.sel){
+        const labelWidth=g.measureText(label).width+labelSize*1.1;
+        g.fillStyle='rgba(31,27,24,.9)'; g.fillRect(cx-labelWidth/2,cy-labelSize*1.15,labelWidth,labelSize*1.55);
+        g.strokeStyle='rgba(244,224,165,.9)'; g.lineWidth=1.1*inv;
+        g.strokeRect(cx-labelWidth/2,cy-labelSize*1.15,labelWidth,labelSize*1.55);
+      }
+      g.lineWidth=2.3*inv; g.strokeStyle='rgba(7,12,13,.84)'; g.strokeText(label,cx,cy);
+      g.fillStyle=P.id===G.sel?'#fff1bc':'#eee4cd'; g.fillText(label,cx,cy);
     }
     if(P.cap){ const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
-      g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1; g.beginPath();
-      g.arc(qx,qy,3.3,0,Math.PI*2); g.fill(); g.stroke(); }
-    if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14,cy-3,2.5,0,7); g.fill(); }
-    if(showName&&officialAt(P.id)){ g.fillStyle='rgba(113,190,125,.9)'; g.beginPath(); g.arc(cx-14,cy-3,2.3,0,7); g.fill(); }
+      g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1*inv; g.beginPath();
+      g.arc(qx,qy,3.3/Math.sqrt(mapView.zoom),0,Math.PI*2); g.fill(); g.stroke(); }
+    if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14,cy-3,2.5*inv,0,7); g.fill(); }
+    if(showName&&officialAt(P.id)){ g.fillStyle='rgba(113,190,125,.9)'; g.beginPath(); g.arc(cx-14,cy-3,2.3*inv,0,7); g.fill(); }
     g.textAlign='left';
   });
 
+  g.restore();
+
   hz(CFG.GX,CFG.GY,MW,MH,()=>{ const id=provinceAtPoint(Mouse.x,Mouse.y); if(id) G.sel=id; });
   drawMapModeControl(g);
+  drawMapFocusControl(g);
+  g.strokeStyle='rgba(224,189,118,.28)'; g.lineWidth=1; g.strokeRect(CFG.GX+.5,CFG.GY+.5,MW-1,MH-1);
 
   let lx=CFG.GX+6, ly=CFG.GY+MH+16; g.font='11px serif';
   Object.keys(NATIONS).forEach(k=>{
@@ -2710,7 +2837,8 @@ function drawTip(g){
 const SLOTS=['auto','1','2','3'];
 function slotKey(s){ return CFG.SAVE+'_'+s; }
 function packSave(){
-  const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn, mapMode:G.mapMode,
+  const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn,
+    mapMode:G.mapMode, mapFocus:G.mapFocus,
     provs:{}, nations:G.nations, officials:G.officials, pool:G.pool,
     factions:G.factions, policies:G.policies, polSince:G.polSince,
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
@@ -2745,6 +2873,7 @@ function loadGame(slot){
     newGame();
     G.year=d.year; G.era=d.era; G.turn=d.turn;
     G.mapMode=MAP_MODE_PARAM?START_MAP_MODE:(d.mapMode||'terrain');
+    G.mapFocus=MAP_FOCUS_PARAM?START_MAP_FOCUS:(d.mapFocus||'korea');
     G.nations=d.nations; G.officials=d.officials; G.pool=d.pool;
     G.factions=d.factions; G.policies=d.policies; G.log=d.log||[];
     G.polSince=d.polSince||{}; G.scores=d.scores||[]; G.ended=!!d.ended;
@@ -3007,6 +3136,9 @@ function tick(){
   if(Key.pressed['Space'] && !창 && !G.ended && SCENE==='play'){ Key.pressed['Space']=false; endTurn(); }
   if(Key.pressed['KeyM'] && !창 && SCENE==='play'){
     Key.pressed['KeyM']=false; G.mapMode=G.mapMode==='terrain'?'political':'terrain';
+  }
+  if(Key.pressed['KeyF'] && !창 && SCENE==='play'){
+    Key.pressed['KeyF']=false; G.mapFocus=G.mapFocus==='korea'?'all':'korea';
   }
   // 오른쪽 판이 여섯 갈래가 되었으니 손으로도 넘길 수 있어야 한다
   if(!창 && SCENE==='play'){
