@@ -48,10 +48,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -1378,48 +1378,43 @@ function aiTurn(B){
           const q=G.provs[id]; if(!q || q.nat===k) return;
           // 동맹이거나 휴전 중이면 조선을 건드리지 않는다
           if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
-          const T=TERR[q.t];
-          // 지키는 쪽도 이웃한 제 나라 고을에서 원군을 받는다 (셈이 양쪽에 같다)
-          let 원군=0;
-          [...q.adj].forEach(id2=>{ const r=G.provs[id2];
-            if(r && r!==p && r.nat===q.nat) 원군 += r.army*0.30; });
-          let 방어=(q.army+원군)*T.def*(1+q.fort*0.16)*(1+techOf(q.nat)/220);
-          if(q.nat==='kor') 방어*=M.defKor*unitOf(q).def;      // 의병·부국강병·병종
-          let 응원=0;
-          [...p.adj].forEach(id2=>{ const r=G.provs[id2];
-            if(r && r!==q && r.nat===k) 응원 += r.army*0.20; });
-          const 공격=(p.army+응원)*(1+techOf(k)/220);
+          /* 셈은 플레이어가 걸 때와 똑같다 — 화면에 보여 주는 낌새와
+             이웃이 판단하는 수가 같아야 한다. */
+          const w=warPower(p,q);
+          const 이길낌새=winChance(w.atk, w.def);
           // 사대교린과 세폐는 큰 나라의 발길을 늦춘다
           const 눈치 = (q.nat==='kor')? M.invRisk : 1;
           // 사이가 나쁠수록 조선을 먼저 문다. 좋으면 다른 데를 본다.
           let 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
-          // 빼앗긴 제 땅은 기어이 되찾으려 한다
-          if(q.home===k && q.nat!==k) 미움 += 0.9;
-          // 조선이 커지면 이웃이 함께 경계한다
+          if(q.home===k && q.nat!==k) 미움 += 0.9;          // 빼앗긴 제 땅
           if(q.nat==='kor') 미움 += clamp((natProvs('kor').length-16)*0.035, 0, 0.9);
-          const s=(공격/Math.max(1,방어) + (q.unrest/100) + 미움)*눈치;
-          if(공격>방어*1.25 && s>bs && s>0){ bs=s; best=[p,q]; }
+          const s2=(이길낌새 + (q.unrest/200) + 미움)*눈치;
+          // 이길 낌새가 어지간해야 군사를 낸다. 그래도 주사위는 던진다 —
+          // 반반인 싸움에 뛰어드는 것은 슬기로운 조정이 아니라 무모한 조정이다.
+          if(이길낌새>0.66 && s2>bs){ bs=s2; best=[p,q]; }
         });
       });
       if(best){
         const [from,q]=best;
-        const old=q.nat;
-        if(old==='kor' && d && !d.war) declareWar(k, false);
         const 옛임자=q.nat;
-        fxBattle(from, q, true, 0, Math.round(q.army*0.6));
-        q.nat=k; q.unrest=clamp(q.unrest+40,0,100); q.assim=0;
-        q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
-        G.plateDirty=true;
-        log(natName(k)+'이(가) '+q.nm+'을(를) 차지했다.');
-        if(옛임자==='kor') snd('lose');
-        if(old==='kor'){
-          G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
-          G.legit=clamp(G.legit-5,0,100);
-          if(B) B.events.push(q.nm+' 함락');
-          if(q.cap) log('도읍이 넘어갔다.');
-          /* 동맹이 있으면 우리를 문 쪽을 문다 — 동맹의 값어치 */
-          const 벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
-          if(벗) allyStrike(벗, k, B);
+        if(옛임자==='kor' && d && !d.war) declareWar(k, false);
+        const r=resolveBattle(from, q);
+        if(r.won){
+          q.nat=k;
+          log(natName(k)+'이(가) '+q.nm+'을(를) 차지했다.');
+          if(옛임자==='kor'){
+            G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
+            G.legit=clamp(G.legit-5,0,100);
+            if(B) B.events.push(q.nm+' 함락');
+            if(q.cap) log('도읍이 넘어갔다.');
+            snd('lose');
+            /* 동맹이 있으면 우리를 문 쪽을 문다 — 동맹의 값어치 */
+            const 벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
+            if(벗) allyStrike(벗, k, B);
+          }
+        } else {
+          log(natName(k)+'이(가) '+q.nm+'을(를) 쳤으나 물러났다.');
+          if(옛임자==='kor' && B) B.events.push(q.nm+' 방어');
         }
       }
     }
@@ -1432,18 +1427,18 @@ function allyStrike(friend, foe, B){
   mine.forEach(p=>{
     [...p.adj].forEach(id=>{
       const q=G.provs[id]; if(!q || q.nat!==foe) return;
-      const s=p.army/Math.max(1,q.army*TERR[q.t].def*(1+q.fort*0.16));
-      if(s>1.1 && s>bs){ bs=s; best=[p,q]; }
+      const w=warPower(p,q), s2=winChance(w.atk, w.def);
+      if(s2>0.58 && s2>bs){ bs=s2; best=[p,q]; }
     });
   });
   if(!best) return;
   const [from,q]=best;
-  fxBattle(from, q, true, 0, 0);
-  q.nat=friend; q.unrest=clamp(q.unrest+35,0,100); q.assim=0;
-  q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
-  G.plateDirty=true;
-  log(natName(friend)+'이(가) 약조대로 '+natName(foe)+'의 '+q.nm+'을(를) 쳤다.');
-  if(B) B.events.push('동맹의 보복');
+  const r=resolveBattle(from, q);
+  if(r.won){
+    q.nat=friend;
+    log(natName(friend)+'이(가) 약조대로 '+natName(foe)+'의 '+q.nm+'을(를) 쳤다.');
+    if(B) B.events.push('동맹의 보복');
+  }
 }
 
 /* ── 시대 성적 ── */
@@ -1599,40 +1594,80 @@ function adjToKor(p){ return [...p.adj].some(id=>G.provs[id] && G.provs[id].nat=
    따로 두면 언젠가 반드시 어긋난다. */
 function warPower(from, target){
   const M=mods();
+  const 우리공격 = from.nat==='kor', 우리수비 = target.nat==='kor';
+  // 수령의 군무 — 사람을 앉혀 둔 쪽만 얻는다
   const gov=officialAt(from.id);
   const mil=gov? 1+gov.mil/160 : 1;
   // 바다를 건너면 배가 있어야 한다. 경상남도·전라도에서 나가면 수군이 낫다.
   const 육로=[...from.adj].includes(target.id) && !SEA_LINK[from.id+'|'+target.id];
-  const 배 = 육로? 1 : tagVal(from,'navy',0.75)*M.navy;
+  const 배 = 육로? 1 : tagVal(from,'navy',0.75)*(우리공격? M.navy : 1);
   const U=unitOf(from), V=unitOf(target);
-  /* 치는 쪽도 이웃 고을에서 군사를 끌어 온다. 다만 지키는 쪽보다 적다 —
-     오는 데 시간이 걸리고, 제 고을도 비워 둘 수 없다. */
+  /* 응원과 원군 — 이웃한 제 나라 고을이 군사를 보낸다.
+     치는 쪽은 오는 데 시간이 걸리고 제 고을도 비울 수 없어 덜 온다. */
   let 응원=0;
-  [...from.adj].forEach(id=>{
-    const q=G.provs[id];
-    if(q && q!==target && q.nat==='kor') 응원 += q.army*0.20;
-  });
-  const atk=(from.army+응원)*mil*(1+tagVal(from,'atk',0))*배*U.atk*M.atk
-            *(1+techOf('kor')/220);
-  const T=TERR[target.t];
-  /* 원군 — 큰 나라의 고을은 혼자 서 있지 않다.
-     이웃한 제 나라 고을이 군사를 보낸다. 예전에는 이것이 없어서, 큰 나라를
-     한 고을씩 떼어 먹는 동안 나머지 고을이 구경만 했다. */
+  [...from.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q!==target && q.nat===from.nat) 응원 += q.army*0.20; });
   let 원군=0;
-  [...target.adj].forEach(id=>{
-    const q=G.provs[id];
-    if(q && q!==from && q.nat===target.nat) 원군 += q.army*0.30;
-  });
-  const def=(target.army+원군)*T.def*(1+target.fort*0.14)*V.def
-            *(target.nat==='kor'? M.defKor : 1)
-            *(1+techOf(target.nat)/220);
-  return { atk, def, 육로, U, V, 원군 };
+  [...target.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q!==from && q.nat===target.nat) 원군 += q.army*0.30; });
+
+  const atk=(from.army+응원)*mil*(1+tagVal(from,'atk',0))*배*U.atk
+            *(우리공격? M.atk : 1)*(1+techOf(from.nat)/220);
+  const T=TERR[target.t];
+  const def=(target.army+원군)*T.def*(1+target.fort*0.16)*V.def
+            *(우리수비? M.defKor : 1)*(1+techOf(target.nat)/220);
+  return { atk, def, 육로, U, V, 원군, 응원 };
 }
+
+/* 이길 낌새.
+   ----------------------------------------------------------------
+   예전에는 화면에 atk/(atk+def) 를 적어 놓고, 판정은 양쪽에 주사위를 곱해
+   큰 쪽이 이기게 했다. 그러면 1.45배 앞선 싸움이 화면에는 '59%'로 적히는데
+   실제로는 백 번 붙어 백 번 이긴다 — 주사위 폭(0.85~1.15 대 0.9~1.1)이
+   그 차이를 뒤집지 못하기 때문이다. 적어 놓은 수가 뜻하는 바와 달랐다.
+
+   이제 여기서 낸 값이 곧 이길 확률이고, 판정도 이 값으로 던진다.
+   화면 · 판정 · 이웃의 판단이 모두 같은 수를 쓴다.
+     1대1 50%   1.25대1 60%   1.5대1 68%   2대1 82%   3대1 92%
+   ---------------------------------------------------------------- */
+function winChance(atk, def){
+  const k=2.2;
+  const A=Math.pow(Math.max(1,atk),k), D=Math.pow(Math.max(1,def),k);
+  return clamp(A/(A+D), 0.02, 0.98);
+}
+
+/* 싸움을 붙인다 — 누가 걸든 같은 셈, 같은 주사위, 같은 피.
+   예전에는 이웃이 칠 때만 주사위도 손실도 없이 문턱만 넘으면 고을을 가져갔다.
+   화면에 보여 주는 낌새와 이웃이 셈하는 수가 서로 달랐다. */
+function resolveBattle(from, target){
+  const w=warPower(from,target);
+  const 승산=winChance(w.atk, w.def);
+  const won0=Math.random()<승산;
+  // 진 쪽이 더 상한다. 팽팽한 싸움일수록 양쪽 다 크게 상한다.
+  const lossA=Math.round(from.army*clamp(0.10+(1-승산)*0.55, 0.08, 0.65));
+  const lossD=Math.round(target.army*clamp(0.12+승산*0.70, 0.12, 0.82));
+  from.army=Math.max(0,from.army-lossA);
+  target.army=Math.max(0,target.army-lossD);
+  // 끌어 온 군사도 피를 흘린다 — 이겨도 주변이 함께 얇아진다
+  [...from.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q!==target && q.nat===from.nat) q.army=Math.round(q.army*0.93); });
+  [...target.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q!==from && q.nat===target.nat) q.army=Math.round(q.army*0.95); });
+  const won = won0;
+  fxBattle(from, target, won, lossA, lossD);
+  if(won){
+    target.unrest=clamp(target.unrest+42,0,100); target.assim=0;
+    target.army=Math.round(from.army*0.25); from.army=Math.round(from.army*0.75);
+    G.plateDirty=true;
+  }
+  return { won, lossA, lossD, w, 승산 };
+}
+
 function warOdds(target){
   const from=invadeFrom(target);
   if(!from) return null;
   const w=warPower(from,target);
-  return { from, ...w, p:clamp(w.atk/(w.atk+w.def),0,1) };
+  return { from, ...w, p:winChance(w.atk, w.def) };
 }
 function invadeFrom(target){
   return [...target.adj].map(id=>G.provs[id]).filter(q=>q&&q.nat==='kor')
@@ -1642,30 +1677,18 @@ function invade(target){
   const from=invadeFrom(target);
   if(!from){ log('칠 만한 자리가 없다.'); return; }
   const 임자=target.nat;
-  // 남의 나라 고을을 치는 것은 곧 전쟁이다. 전에는 아무 일도 아니었다.
+  // 남의 나라 고을을 치는 것은 곧 전쟁이다.
   if(DIP_NATS.includes(임자)) declareWar(임자, true);
-  const w=warPower(from,target);
-  const atk=w.atk*rnd(0.85,1.15), def=w.def*rnd(0.9,1.1);
-  // 이웃에서 끌어 온 군사도 피를 흘린다 — 이겨도 주변이 함께 얇아진다
-  [...from.adj].forEach(id=>{ const q=G.provs[id];
-    if(q && q!==target && q.nat==='kor') q.army=Math.round(q.army*0.93); });
-  const lossA=Math.round(from.army*clamp(def/(atk+def),0.15,0.7));
-  const lossD=Math.round(target.army*clamp(atk/(atk+def),0.2,0.85));
-  from.army=Math.max(0,from.army-lossA);
-  target.army=Math.max(0,target.army-lossD);
-  const 이겼나 = atk>def;
-  fxBattle(from, target, 이겼나, lossA, lossD);
-  if(이겼나){
+  const r=resolveBattle(from, target);
+  if(r.won){
     const old=natName(임자);
-    target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100); target.assim=0;
-    G.plateDirty=true;
-    target.army=Math.round(from.army*0.25); from.army=Math.round(from.army*0.75);
-    log(from.nm+'의 '+w.U.nm+'이(가) '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(lossD)+')');
+    target.nat='kor';
+    log(from.nm+'의 '+r.w.U.nm+'이(가) '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(r.lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
     G.legit=clamp(G.legit+2,0,100);
     snd('win');
   } else {
-    log(target.nm+'을(를) 쳤으나 물러났다. (아군 손실 '+num(lossA)+')');
+    log(target.nm+'을(를) 쳤으나 물러났다. (아군 손실 '+num(r.lossA)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-6,0,100);
     G.legit=clamp(G.legit-2,0,100);
     snd('lose');
@@ -3330,15 +3353,43 @@ function drawBottom(g){
         G.tip = TG.note + (조각.length? '   ' + 조각.join(' · ') : '');
       }
     }
+    /* 이 고을이 실제로 얼마나 버티는가.
+       위 표시줄의 '군사'는 나라 전체 합이라, 고을 하나가 얼마로 지키는지는
+       어디에도 보이지 않았다. 사만을 가지고도 성이 밀리는 것처럼 보인 까닭이다. */
+    let 수비=null, 위태=false, 위협=0, 위협처=null, 원군=0;
+    if(P.nat==='kor'){
+      [...P.adj].forEach(id=>{
+        const q=G.provs[id]; if(!q) return;
+        if(q.nat==='kor') 원군 += q.army*0.30;
+        else { const w=warPower(q,P); if(w.atk>위협){ 위협=w.atk; 위협처=q; } }
+      });
+      const T2=TERR[P.t];
+      수비=(P.army+원군)*T2.def*(1+P.fort*0.16)*unitOf(P).def
+           *mods().defKor*(1+techOf('kor')/220);
+      위태 = 위협>0 && winChance(위협, 수비)>0.5;
+    }
     // 수치 — 이름표가 길어져도 겹치지 않게 이름표 너비도 함께 잰다
-    let sx=x+230;
-    [['인구',num(P.pop)],['개발',P.dev],['농지',P.farm],['상업',P.trade],
-     ['성곽',P.fort],['병력 · '+unitOf(P).nm,num(P.army)]].forEach(([k,v])=>{
+    let sx=x+226;
+    const 수치=[['인구',num(P.pop)],['개발',P.dev],['농지',P.farm],['상업',P.trade],
+                ['성곽',P.fort],['병력 · '+unitOf(P).nm,num(P.army)]];
+    // 우리 고을이면 '수비'를 맨 앞에 세운다 — 이 고을이 실제로 버티는 힘
+    if(수비!=null) 수치.unshift(['수비', num(Math.round(수비)), 위태?'#e08a80':'#cfc7b6', 위태?'위태롭다':null]);
+    수치.forEach(([k,v,col,note])=>{
       g.font='10px serif'; const lw=g.measureText(k).width;
-      g.fillStyle='rgba(150,145,135,.75)'; g.fillText(k, sx, y+22);
+      g.fillStyle= col&&위태&&k==='수비'? '#c4534a' : 'rgba(150,145,135,.75)';
+      g.fillText(k, sx, y+22);
       g.font='14px serif'; const vw=g.measureText(v+'').width;
-      g.fillStyle='#e8e1d1'; g.fillText(v+'', sx, y+40);
-      sx+=Math.max(64, Math.max(vw,lw)+26);
+      g.fillStyle= col||'#e8e1d1'; g.fillText(v+'', sx, y+40);
+      const nw=note? (g.font='9px serif', g.measureText(note).width) : 0;
+      if(note){ g.fillStyle='#c4534a'; g.fillText(note, sx, y+51); }
+      if(k==='수비' && inRect(Mouse,{x:sx-4,y:y+12,w:Math.max(70,vw+26),h:44}))
+        G.tip = '이 고을이 실제로 버티는 힘 '+num(Math.round(수비))
+          + '  =  병력 '+num(P.army)+' + 이웃의 원군 '+num(Math.round(원군))
+          + '  ×  지형 '+TERR[P.t].def.toFixed(2)+' × 성곽 '+(1+P.fort*0.16).toFixed(2)
+          + ' × 병종 '+unitOf(P).def.toFixed(2)
+          + (위협처? ('    ·  가장 센 이웃 '+위협처.nm+'이(가) 치면 '+위협처.nm+'의 이길 낌새 '
+                      +Math.round(winChance(위협,수비)*100)+'%') : '    ·  맞댄 남의 고을이 없다');
+      sx+=Math.max(64, Math.max(vw,lw,nw)+26);
     });
     g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText('민심', sx, y+22);
     bar(g,sx,y+28,80,10, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
