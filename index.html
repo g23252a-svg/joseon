@@ -14,6 +14,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="cv" width="1280" height="720"></canvas></div>
+<script src="assets/map_geo.js"></script>
 <script>
 "use strict";
 /* =========================================================================
@@ -22,6 +23,8 @@
    v0.1.0
    ========================================================================= */
 const VERSION = '0.2.1';
+const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
+const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
 
 const CFG = { W:1280, H:720, CELL:12, GX:8, GY:62, GW:74, GH:40, SAVE:'donga_save_v4' };
 
@@ -67,6 +70,7 @@ addEventListener('resize',resize); resize();
    ================================================================ */
 const ASSETS={
   src:{
+    relief:   'assets/east_asia_relief.webp', // 실제 지표·음영기복 (888×480)
     terrain:  'assets/terrain.png',    // 44×44 지형 4칸 (평야·구릉·산지·연안)
     icons:    'assets/icons.png',      // 32×32 아이콘 8칸
     flags:    'assets/flags.png',      // 48×32 세력기 3칸
@@ -83,7 +87,8 @@ const NAT_UV ={ kor:0, chn:1, jpn:2 };
 function loadAssets(){
   for(const k in ASSETS.src){
     const im=new Image();
-    im.onload =()=>{ ASSETS.ready[k]=true;  ASSETS.log.push(k+' ✓ '+im.width+'×'+im.height); };
+    im.onload =()=>{ ASSETS.ready[k]=true; ASSETS.log.push(k+' ✓ '+im.width+'×'+im.height);
+      if(k==='relief') MAPBASE=null; };
     im.onerror=()=>{ ASSETS.ready[k]=false; ASSETS.log.push(k+' — 없음(코드 그림)'); };
     im.src=ASSETS.src[k]; ASSETS.img[k]=im;
   }
@@ -139,9 +144,9 @@ function eraOf(y){ let e=0; ERAS.forEach((E,i)=>{ if(y>=E.y) e=i; }); return e; 
 
 /* 세력 */
 const NATIONS={
-  kor:{ nm:'조선', col:'#4f7fb5', col2:'#2f5a86', names:['조선','조선','대한제국','대한제국','조선총독부','대한민국','대한민국','대한민국'] },
-  chn:{ nm:'명',   col:'#b5654f', col2:'#8a4436', names:['명','명','청','청','청','중화민국','중화인민공화국','중화인민공화국'] },
-  jpn:{ nm:'일본', col:'#8a6fae', col2:'#66518a', names:['무로마치','도요토미','에도','메이지','일본제국','일본','일본','일본'] },
+  kor:{ nm:'조선', col:'#7186c2', col2:'#425a94', names:['조선','조선','대한제국','대한제국','조선총독부','대한민국','대한민국','대한민국'] },
+  chn:{ nm:'명',   col:'#d1b65c', col2:'#927b31', names:['명','명','청','청','청','중화민국','중화인민공화국','중화인민공화국'] },
+  jpn:{ nm:'일본', col:'#70967f', col2:'#466c58', names:['무로마치','도요토미','에도','메이지','일본제국','일본','일본','일본'] },
   ind:{ nm:'독립',  col:'#6f8a72', col2:'#51684f', names:['유구','유구','유구','유구','유구','유구','유구','유구'] }
 };
 function natName(k){ const n=NATIONS[k]; return n.names[Math.min(n.names.length-1,G.era)]; }
@@ -336,7 +341,7 @@ function makeName(){ return pick(SUR)+pick(GIV)+pick(GIV); }
    ================================================================ */
 let G=null;
 function newGame(){
-  G={ year:1392, era:0, turn:0, mode:'play', log:[], tab:'국정',
+  G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, log:[], tab:'국정',
       sel:null, hover:null, nat:'kor', hints:[], ended:false,
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], polSince:{}, warTarget:null, popup:null, ver:VERSION,
@@ -1244,67 +1249,197 @@ function inkText(g,t,x,y,size,col,halo){
   g.fillStyle=col||PAL.ink; g.fillText(t,x,y);
 }
 
-function drawMap(g){
-  const C=CFG.CELL, MW=CFG.GW*C, MH=CFG.GH*C;
-  if(G.plateDirty || !PLATE) buildPlate();
-  g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(CFG.GX+4, CFG.GY+6, MW, MH);   // 종이 그림자
-  g.drawImage(PLATE, CFG.GX, CFG.GY);
+/* 실제 지리 + 음영기복 지도. 경제·전쟁용 G.grid는 그대로 두고 화면과 클릭만 분리한다. */
+let MAPVIS=null, MAPBASE=null, MAPCLOUDS=null;
+const MAP_NAMES={
+  hamb:'함북',hamn:'함남',pyab:'평북',pyan:'평남',hwan:'황해',gaes:'개성',hans:'한성',
+  gyeo:'경기',gang:'강원',chub:'충북',chun:'충남',gyeb:'경북',ando:'안동',gyen:'경남',
+  jeon:'전라',jeju:'제주',mong:'몽골',manj:'만주',liao:'요동',hebe:'하북',shan:'산동',
+  shax:'산서',shaa:'서북',hena:'하남',sich:'서남',hube:'호광',jian:'강소',zhej:'절강',
+  fuji:'복건',guan:'광동',hokk:'홋카이도',toho:'도호쿠',kant:'간토',chubu:'주부',
+  kans:'간사이',chug:'주고쿠',shik:'시코쿠',kyus:'규슈',sats:'사쓰마',tsus:'대마도',
+  ryuk:'유구',taiw:'타이완'
+};
 
-  g.save(); g.translate(CFG.GX, CFG.GY);
-  const S=G.sel?G.provs[G.sel]:null, Hv=G.hover?G.provs[G.hover]:null;
-  if(G.view==='unrest'){
-    Object.values(G.provs).forEach(p=>{
-      g.fillStyle='rgba(157,59,50,'+(p.unrest/100*.45)+')'; g.fill(p._path); });
-  }
-  if(Hv&&Hv!==S){ g.fillStyle='rgba(255,255,255,.16)'; g.fill(Hv._path); }
-  if(S){
-    g.fillStyle='rgba(255,246,214,.22)'; g.fill(S._path);
-    g.setLineDash([6,4]); g.lineDashOffset=-performance.now()/60;
-    g.strokeStyle='rgba(60,50,30,.9)'; g.lineWidth=2; g.stroke(S._path); g.setLineDash([]);
-  }
-  Object.values(G.provs).forEach(p=>{
-    const own=p.nat==='kor';
-    if(p.cap){
-      g.strokeStyle=PAL.ink; g.lineWidth=1.4;
-      g.beginPath(); g.arc(p.cx,p.cy-13,5,0,7); g.stroke();
-      g.beginPath(); g.arc(p.cx,p.cy-13,2.2,0,7); g.fillStyle=PAL.ink; g.fill();
-    } else if(own){
-      g.fillStyle='rgba(44,40,34,.8)'; g.beginPath(); g.arc(p.cx,p.cy-11,2,0,7); g.fill();
-    }
-    g.textAlign='center';
-    inkText(g,p.nm,p.cx,p.cy+(p.cap?6:4), (p.cap||own)?13:12,
-      own?'#2c2822':'rgba(58,52,44,.72)');
-    if(p.unrest>55){
-      g.fillStyle=PAL.red; g.beginPath();
-      g.arc(p.cx+g.measureText(p.nm).width/2+8, p.cy, 3.2, 0, 7); g.fill();
-    }
-    if(officialAt(p.id)){
-      g.fillStyle='rgba(60,110,70,.85)'; g.beginPath();
-      g.arc(p.cx-g.measureText(p.nm).width/2-8, p.cy-3, 2.6, 0, 7); g.fill();
-    }
-    g.textAlign='left';
+function ensureMapVis(){
+  if(MAPVIS) return;
+  if(!window.MAP_GEO) throw new Error('assets/map_geo.js를 불러오지 못했습니다.');
+  const regions={}, prov={}, rect={}, provOutline={}, anchors={};
+  PROVDEF.forEach(P=>{ if(!MAP_GEO.regions[P.id]) throw new Error('지도 권역 누락: '+P.id); });
+  Object.entries(MAP_GEO.regions).forEach(([id,data])=>{
+    const path=new Path2D(data.d);
+    regions[id]={...data,path}; prov[id]=path; rect[id]=path; provOutline[id]=path;
+    anchors[id]={x:CFG.GX+data.label[0],y:CFG.GY+data.label[1]};
+    if(G&&G.provs[id]){ G.provs[id]._path=path; G.provs[id].cx=data.label[0]; G.provs[id].cy=data.label[1]; }
   });
+  const boundaries=MAP_GEO.borders.map(b=>({...b,path:new Path2D(b.d)}));
+  MAPVIS={land:new Path2D(MAP_GEO.coast),regions,prov,rect,provOutline,anchors,
+    inner:new Path2D(MAP_GEO.borders.map(b=>b.d).join('')),boundaries};
+}
+
+function rebuildMapBase(){
+  ensureMapVis();
+  const c=document.createElement('canvas'); c.width=CFG.W; c.height=CFG.H;
+  const g=c.getContext('2d'), W=MAP_GEO.width, H=MAP_GEO.height;
+  const sea=g.createLinearGradient(CFG.GX,CFG.GY,CFG.GX+W,CFG.GY+H);
+  sea.addColorStop(0,'#071923'); sea.addColorStop(.52,'#0b2a38'); sea.addColorStop(1,'#123d4a');
+  g.fillStyle=sea; g.fillRect(CFG.GX,CFG.GY,W,H);
+  g.save(); g.translate(CFG.GX,CFG.GY); g.lineJoin='round'; g.lineCap='round';
+  [[24,'rgba(66,120,132,.065)'],[13,'rgba(93,146,150,.095)'],[5,'rgba(179,197,180,.15)']].forEach(([w,col])=>{
+    g.strokeStyle=col; g.lineWidth=w; g.stroke(MAPVIS.land);
+  }); g.restore();
+  g.save(); g.beginPath(); g.rect(CFG.GX,CFG.GY,W,H); g.clip();
+  for(let i=0;i<34;i++){
+    const q=hash2(i,13), q2=hash2(i,29), x=CFG.GX+q*W, y=CFG.GY+q2*H;
+    const len=28+hash2(i,47)*70, rise=(hash2(i,61)-.5)*5;
+    g.strokeStyle='rgba(137,184,190,'+(0.018+hash2(i,73)*0.025)+')'; g.lineWidth=.65;
+    g.beginPath(); g.moveTo(x,y); g.quadraticCurveTo(x+len*.25,y-2+rise,x+len*.5,y);
+    g.quadraticCurveTo(x+len*.75,y+2-rise,x+len,y); g.stroke();
+  } g.restore();
+  g.save(); g.translate(CFG.GX,CFG.GY);
+  g.save(); g.shadowColor='rgba(0,0,0,.52)'; g.shadowBlur=5; g.shadowOffsetY=2;
+  g.fillStyle='#415042'; g.fill(MAPVIS.land,'evenodd'); g.restore();
+  if(hasAsset('relief')){
+    g.save(); g.clip(MAPVIS.land,'evenodd'); g.filter='saturate(.96) contrast(1.04)';
+    g.drawImage(ASSETS.img.relief,0,0,W,H); g.filter='none';
+    const shade=g.createLinearGradient(0,0,W,H);
+    shade.addColorStop(0,'rgba(244,226,164,.035)'); shade.addColorStop(1,'rgba(8,24,27,.12)');
+    g.fillStyle=shade; g.fillRect(0,0,W,H); g.restore();
+  }else{
+    Object.values(G.provs).forEach(P=>{ g.fillStyle=TERR[P.t].col; g.fill(MAPVIS.rect[P.id],'evenodd'); });
+  }
+  g.restore(); MAPBASE=c;
+}
+
+function ensureMapBase(){ ensureMapVis(); if(!MAPBASE) rebuildMapBase(); }
+
+function ensureCloudLayer(){
+  if(MAPCLOUDS) return;
+  const c=document.createElement('canvas'); c.width=MAP_GEO.width; c.height=MAP_GEO.height;
+  const g=c.getContext('2d');
+  [[555,408,.92],[800,386,1.02]].forEach(([cx,cy,s],cluster)=>{
+    for(let i=0;i<14;i++){
+      const a=hash2(cluster*31+i,401)*Math.PI*2, d=hash2(cluster*31+i,409)*44*s;
+      const x=cx+Math.cos(a)*d, y=cy+Math.sin(a)*d*.42, r=(16+hash2(i,cluster+419)*30)*s;
+      const cloud=g.createRadialGradient(x-r*.2,y-r*.15,r*.08,x,y,r);
+      cloud.addColorStop(0,'rgba(244,241,222,.18)'); cloud.addColorStop(.55,'rgba(224,231,220,.10)');
+      cloud.addColorStop(1,'rgba(214,228,222,0)'); g.fillStyle=cloud; g.fillRect(x-r,y-r,r*2,r*2);
+    }
+  }); MAPCLOUDS=c;
+}
+
+function provinceAtPoint(x,y){
+  if(x<CFG.GX||y<CFG.GY||x>CFG.GX+MAP_GEO.width||y>CFG.GY+MAP_GEO.height) return null;
+  ensureMapVis(); const lx=x-CFG.GX, ly=y-CFG.GY;
+  for(const [id,R] of Object.entries(MAPVIS.regions)){
+    const b=R.bbox;
+    if(lx>=b[0]&&ly>=b[1]&&lx<=b[2]&&ly<=b[3]&&ctx.isPointInPath(R.path,lx,ly,'evenodd')) return id;
+  }
+  for(const [id,R] of Object.entries(MAPVIS.regions)){
+    if(Math.hypot(lx-R.label[0],ly-R.label[1])<=(R.small?12:9)) return id;
+  }
+  return null;
+}
+
+function drawSeaRoutes(g){
+  const routes=[['gyen','tsus'],['tsus','kyus'],['shan','hwan'],['zhej','ryuk'],['fuji','taiw']];
+  g.save(); g.translate(CFG.GX,CFG.GY); g.setLineDash([4,7]); g.lineCap='round';
+  g.strokeStyle=G.mapMode==='political'?'rgba(105,157,181,.52)':'rgba(123,180,196,.30)'; g.lineWidth=1;
+  routes.forEach(([a,b],i)=>{
+    const p=MAPVIS.regions[a].anchor, q=MAPVIS.regions[b].anchor;
+    const mx=(p[0]+q[0])/2+(hash2(i,701)-.5)*22, my=(p[1]+q[1])/2-12-hash2(i,709)*16;
+    g.beginPath(); g.moveTo(p[0],p[1]); g.quadraticCurveTo(mx,my,q[0],q[1]); g.stroke();
+  }); g.setLineDash([]); g.restore();
+}
+
+function drawCountryLabels(g){
+  const political=G.mapMode==='political';
+  const labels={chn:{x:350,y:248,size:58,angle:-.04},kor:{x:642,y:235,size:34,angle:1.08},jpn:{x:758,y:238,size:27,angle:-.58}};
+  Object.entries(labels).forEach(([id,L])=>{
+    const name=natName(id), size=Math.max(17,L.size-Math.max(0,name.length-3)*3.2);
+    g.save(); g.translate(CFG.GX+L.x,CFG.GY+L.y); g.rotate(L.angle);
+    g.textAlign='center'; g.textBaseline='middle'; g.font='700 '+size+'px serif';
+    g.globalAlpha=political?.92:.10; g.shadowColor='rgba(246,231,185,.28)'; g.shadowBlur=2;
+    g.lineWidth=2; g.strokeStyle='rgba(244,231,185,.26)'; g.strokeText(name,0,0);
+    g.fillStyle='rgba(39,32,20,.96)'; g.fillText(name,0,0); g.restore();
+  });
+}
+
+function drawMapModeControl(g){
+  const x=CFG.GX+10,y=CFG.GY+10,w=57,h=23;
+  panel(g,x-3,y-3,w*2+6,h+6,.78);
+  btn(g,x,y,w,h,'지형',G.mapMode==='terrain',()=>{G.mapMode='terrain';});
+  btn(g,x+w,y,w,h,'정치',G.mapMode==='political',()=>{G.mapMode='political';});
+}
+
+function drawMap(g){
+  const C=CFG.CELL, MW=MAP_GEO.width, MH=MAP_GEO.height, political=G.mapMode==='political';
+  ensureMapBase(); G.hover=provinceAtPoint(Mouse.x,Mouse.y);
+  g.drawImage(MAPBASE,0,0); drawSeaRoutes(g);
+  g.save(); g.translate(CFG.GX,CFG.GY); g.clip(MAPVIS.land,'evenodd');
+  Object.values(G.provs).forEach(P=>{
+    g.globalAlpha=political?.50:.14; g.fillStyle=NATIONS[P.nat].col; g.fill(MAPVIS.rect[P.id],'evenodd');
+  }); g.globalAlpha=1;
+  if(G.view==='unrest') Object.values(G.provs).forEach(P=>{
+    g.fillStyle='rgba(157,59,50,'+(P.unrest/100*.42)+')'; g.fill(MAPVIS.rect[P.id],'evenodd');
+  });
+  if(G.sel&&G.provs[G.sel]){ g.fillStyle='rgba(248,232,172,.11)'; g.fill(MAPVIS.rect[G.sel],'evenodd'); }
+  if(G.hover&&G.provs[G.hover]&&G.hover!==G.sel){ g.fillStyle='rgba(244,239,220,.08)'; g.fill(MAPVIS.rect[G.hover],'evenodd'); }
   g.restore();
 
-  /* 고을 누르기 */
-  G.hover=null;
-  const gx=Math.floor((Mouse.x-CFG.GX)/C), gy=Math.floor((Mouse.y-CFG.GY)/C);
-  if(gx>=0&&gy>=0&&gx<CFG.GW&&gy<CFG.GH && G.grid[gy][gx]) G.hover=G.grid[gy][gx];
-  hz(CFG.GX, CFG.GY, MW, MH, ()=>{ if(G.hover) G.sel=G.hover; });
+  g.save(); g.translate(CFG.GX,CFG.GY); g.lineCap='round'; g.lineJoin='round';
+  g.strokeStyle=political?'rgba(43,39,29,.47)':'rgba(34,36,29,.34)'; g.lineWidth=.72; g.stroke(MAPVIS.inner); g.restore();
+  const nationEdge=new Path2D();
+  MAPVIS.boundaries.forEach(e=>{ if(G.provs[e.a].nat!==G.provs[e.b].nat) nationEdge.addPath(e.path); });
+  g.save(); g.translate(CFG.GX,CFG.GY); g.lineCap='round'; g.lineJoin='round';
+  g.strokeStyle='rgba(5,9,11,.63)'; g.lineWidth=3.5; g.stroke(nationEdge);
+  g.strokeStyle='rgba(224,213,174,.63)'; g.lineWidth=1.35; g.stroke(nationEdge);
+  g.shadowColor='rgba(0,0,0,.42)'; g.shadowBlur=4; g.strokeStyle='rgba(5,16,21,.76)'; g.lineWidth=3.3; g.stroke(MAPVIS.land);
+  g.shadowBlur=0; g.strokeStyle='rgba(220,211,168,.58)'; g.lineWidth=.9; g.stroke(MAPVIS.land); g.restore();
 
-  /* 범례와 보기 전환 */
-  let lx=CFG.GX+6, ly=CFG.GY+MH+16;
-  g.font='11px serif';
+  if(G.sel&&MAPVIS.provOutline[G.sel]){
+    g.save(); g.translate(CFG.GX,CFG.GY); g.shadowColor='rgba(172,190,247,.35)'; g.shadowBlur=7;
+    g.strokeStyle='#e7e0f0'; g.lineWidth=2; g.stroke(MAPVIS.provOutline[G.sel]); g.restore();
+  }
+  if(G.hover&&G.hover!==G.sel&&MAPVIS.provOutline[G.hover]){
+    g.save(); g.translate(CFG.GX,CFG.GY); g.strokeStyle='rgba(255,244,203,.82)'; g.lineWidth=1.1;
+    g.stroke(MAPVIS.provOutline[G.hover]); g.restore();
+  }
+  if(!political){ ensureCloudLayer(); g.save(); g.globalAlpha=.68; g.drawImage(MAPCLOUDS,CFG.GX,CFG.GY); g.restore(); }
+  drawCountryLabels(g);
+
+  Object.values(G.provs).forEach(P=>{
+    const R=MAPVIS.regions[P.id], a=MAPVIS.anchors[P.id], cx=a.x, cy=a.y;
+    P.cx=R.label[0]; P.cy=R.label[1];
+    const showName=!political||P.cap||P.id===G.sel||P.id===G.hover;
+    if(showName){
+      const ax=CFG.GX+R.anchor[0], ay=CFG.GY+R.anchor[1];
+      if(!political&&Math.hypot(cx-ax,cy-ay)>9){
+        g.strokeStyle='rgba(221,214,190,.34)'; g.lineWidth=.55; g.beginPath(); g.moveTo(ax,ay); g.lineTo(cx,cy-3); g.stroke();
+      }
+      g.textAlign='center'; g.font=(R.small?'8.5px':'600 9.5px')+' serif';
+      g.lineWidth=2.3; g.strokeStyle='rgba(7,12,13,.84)'; g.strokeText(MAP_NAMES[P.id]||P.nm,cx,cy);
+      g.fillStyle='#eee4cd'; g.fillText(MAP_NAMES[P.id]||P.nm,cx,cy);
+    }
+    if(P.cap){ const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
+      g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1; g.beginPath();
+      g.arc(qx,qy,3.3,0,Math.PI*2); g.fill(); g.stroke(); }
+    if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14,cy-3,2.5,0,7); g.fill(); }
+    if(showName&&officialAt(P.id)){ g.fillStyle='rgba(113,190,125,.9)'; g.beginPath(); g.arc(cx-14,cy-3,2.3,0,7); g.fill(); }
+    g.textAlign='left';
+  });
+
+  hz(CFG.GX,CFG.GY,MW,MH,()=>{ const id=provinceAtPoint(Mouse.x,Mouse.y); if(id) G.sel=id; });
+  drawMapModeControl(g);
+
+  let lx=CFG.GX+6, ly=CFG.GY+MH+16; g.font='11px serif';
   Object.keys(NATIONS).forEach(k=>{
     if(!natProvs(k).length) return;
-    if(!blit(g,'flags',NAT_UV[k],lx,ly-11,48,32,18,12)){
-      g.fillStyle=NATIONS[k].col; g.fillRect(lx,ly-9,12,10); }
-    g.fillStyle='#c9bfa8'; g.fillText(natName(k)+' '+natProvs(k).length, lx+22, ly);
-    lx+=104;
+    if(!blit(g,'flags',NAT_UV[k],lx,ly-11,48,32,18,12)){ g.fillStyle=NATIONS[k].col; g.fillRect(lx,ly-9,12,10); }
+    g.fillStyle='#c9bfa8'; g.fillText(natName(k)+' '+natProvs(k).length,lx+22,ly); lx+=104;
   });
-  btn(g, CFG.GX+MW-150, ly-16, 150, 22,
-      G.view==='unrest'?'보기 · 민심':'보기 · 세력', false,
-      ()=>{ G.view = G.view==='unrest'?'nat':'unrest'; });
+  btn(g,CFG.GX+MW-150,ly-16,150,22,G.view==='unrest'?'보기 · 민심':'보기 · 세력',false,
+      ()=>{G.view=G.view==='unrest'?'nat':'unrest';});
 }
 
 /* 오른쪽 패널 */
@@ -1822,7 +1957,7 @@ function drawTip(g){
 const SLOTS=['auto','1','2','3'];
 function slotKey(s){ return CFG.SAVE+'_'+s; }
 function packSave(){
-  const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn,
+  const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn, mapMode:G.mapMode,
     provs:{}, nations:G.nations, officials:G.officials, pool:G.pool,
     factions:G.factions, policies:G.policies, polSince:G.polSince,
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
@@ -1854,6 +1989,7 @@ function loadGame(slot){
     if(!d || d.ver!==VERSION) return false;
     newGame();
     G.year=d.year; G.era=d.era; G.turn=d.turn;
+    G.mapMode=MAP_MODE_PARAM?START_MAP_MODE:(d.mapMode||'terrain');
     G.nations=d.nations; G.officials=d.officials; G.pool=d.pool;
     G.factions=d.factions; G.policies=d.policies; G.log=d.log||[];
     G.polSince=d.polSince||{}; G.scores=d.scores||[]; G.ended=!!d.ended;
@@ -2032,6 +2168,9 @@ function drawConfirm(g){
 function tick(){
   const 창 = !!(G.popup || G.report || MENU);
   if(Key.pressed['Space'] && !창 && !G.ended && SCENE==='play'){ Key.pressed['Space']=false; endTurn(); }
+  if(Key.pressed['KeyM'] && !창 && SCENE==='play'){
+    Key.pressed['KeyM']=false; G.mapMode=G.mapMode==='terrain'?'political':'terrain';
+  }
   if(Key.pressed['Escape']){ Key.pressed['Escape']=false;
     if(MENU){
       // 확인 창은 한 겹만 물러난다
