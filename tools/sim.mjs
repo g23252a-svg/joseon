@@ -205,8 +205,14 @@ function uiCheck(){
   });
   shot('놀이 · 민심 보기', () => { G.view = 'unrest'; });
   shot('놀이 · 정치 지도', () => { G.mapMode = 'political'; G.view = 'nat'; });
-  shot('놀이 · 동아시아 전체', () => { G.mapFocus = 'all'; });
-  shot('놀이 · 한반도 확대', () => { G.mapFocus = 'korea'; });
+  shot('놀이 · 동아시아 전체', () => api.call('setMapPreset', 'all'));
+  shot('놀이 · 한반도 확대', () => api.call('setMapPreset', 'korea'));
+  shot('놀이 · 최대로 당긴 지도', () => {
+    api.call('zoomAt', 8 + 888/2, 62 + 480/2, 99);   // 상한까지 당긴다
+  });
+  shot('놀이 · 끝까지 옮긴 지도', () => {
+    G.mapPan.x = 1e6; G.mapPan.y = 1e6; api.call('clampPan');
+  });
 
   /* 한 해를 넘긴 뒤의 창들 */
   api.call('endTurn');
@@ -297,6 +303,7 @@ function snapshot(G){
   return {
     year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol,
     tab:G.tab, sel:G.sel, view:G.view, mapMode:G.mapMode, mapFocus:G.mapFocus,
+    mapZoom:G.mapZoom, mapPan:G.mapPan,
     policies:G.policies, polSince:G.polSince, factions:G.factions,
     scores:G.scores, evDone:G.evDone,
     '연구':{ pt:G.res.pt, done:G.res.done },

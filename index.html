@@ -83,22 +83,78 @@ const selectionStatus=document.getElementById('selection-status');
 function toCanvas(e){ const r=cv.getBoundingClientRect();
   return { x:(e.clientX-r.left)*(CFG.W/r.width), y:(e.clientY-r.top)*(CFG.H/r.height) }; }
 /* 창이 아니라 캔버스에 건다 — 그래야 아래의 고을 선택 상자가 제 노릇을 한다 */
-cv.addEventListener('mousemove',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=false; });
-cv.addEventListener('mousedown',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y;
-  Mouse.touch=false; if(e.button===0) Mouse.click=true; else Mouse.rclick=true; });
+/* 지도 위에서 끌면 지도를 옮긴다. 그래서 '눌렀다'는 판정은 뗄 때 내린다 —
+   끌기 시작한 자리의 고을이 덜컥 골라지지 않아야 한다.
+   단추도 같은 규칙을 따르므로 누른 뒤 밖으로 끌면 취소된다. */
+let MDOWN=null, PAN=null;
+function canPanNow(){ return !!(G && G.mapPan && SCENE==='play' && !MENU && !G.popup && !G.report); }
+function beginPan(x,y){ if(canPanNow() && overMap(x,y)) PAN={sx:x, sy:y, ox:G.mapPan.x, oy:G.mapPan.y}; }
+function dragPan(x,y){
+  if(!PAN||!G||!G.mapPan) return;
+  const z=mapZoom();
+  G.mapPan.x=PAN.ox-(x-PAN.sx)/z;
+  G.mapPan.y=PAN.oy-(y-PAN.sy)/z;
+  clampPan();
+}
+cv.addEventListener('mousemove',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=false;
+  if(MDOWN){
+    if(Math.hypot(p.x-MDOWN.x,p.y-MDOWN.y)>4) MDOWN.moved=true;
+    if(MDOWN.moved) dragPan(p.x,p.y);
+  }
+});
+cv.addEventListener('mousedown',e=>{ const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=false;
+  if(e.button!==0){ Mouse.rclick=true; return; }
+  MDOWN={x:p.x,y:p.y,moved:false}; beginPan(p.x,p.y);
+});
+addEventListener('mouseup',e=>{
+  if(MDOWN && !MDOWN.moved && e.button===0) Mouse.click=true;
+  MDOWN=null; PAN=null;
+});
 cv.addEventListener('contextmenu',e=>e.preventDefault());
-cv.addEventListener('wheel',e=>{ Mouse.wheel+=Math.sign(e.deltaY)*38; e.preventDefault(); },{passive:false});
-/* 손가락 — 끌면 굴리고, 거의 안 움직였으면 누른 것으로 본다.
+/* 휠 — 지도 위에서는 당기고, 오른쪽 판 위에서는 굴린다 */
+cv.addEventListener('wheel',e=>{
+  const p=toCanvas(e); Mouse.x=p.x; Mouse.y=p.y;
+  if(canPanNow() && overMap(p.x,p.y)) zoomAt(p.x, p.y, e.deltaY<0? 1.16 : 1/1.16);
+  else Mouse.wheel+=Math.sign(e.deltaY)*38;
+  e.preventDefault();
+},{passive:false});
+/* 손가락 — 지도 위에서 끌면 지도를 옮기고, 두 손가락은 당긴다.
+   그 밖에서 끌면 오른쪽 판을 굴린다. 거의 안 움직였으면 누른 것으로 본다.
    움직인 거리는 캔버스 좌표가 아니라 화면 좌표로 잰다 — 확대해도 기준이 같아야 한다. */
-let TCH=null;
-cv.addEventListener('touchstart',e=>{ if(!e.touches[0])return; const p=toCanvas(e.touches[0]);
-  const t=e.touches[0]; Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=true;
-  TCH={x:p.x,y:p.y,startX:t.clientX,startY:t.clientY,moved:false}; e.preventDefault(); },{passive:false});
-cv.addEventListener('touchmove',e=>{ if(!TCH||!e.touches[0])return; const t=e.touches[0], p=toCanvas(t);
-  Mouse.wheel += (TCH.y-p.y);
+let TCH=null, PINCH=null;
+function touchSpan(e){
+  const a=e.touches[0], b=e.touches[1];
+  return { d:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
+           mx:(a.clientX+b.clientX)/2, my:(a.clientY+b.clientY)/2 };
+}
+cv.addEventListener('touchstart',e=>{
+  if(e.touches.length>=2 && canPanNow()){ PINCH=touchSpan(e); TCH=null; PAN=null; e.preventDefault(); return; }
+  if(!e.touches[0])return;
+  const t=e.touches[0], p=toCanvas(t);
+  Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=true;
+  TCH={x:p.x,y:p.y,startX:t.clientX,startY:t.clientY,moved:false,onMap:overMap(p.x,p.y)};
+  beginPan(p.x,p.y);
+  e.preventDefault(); },{passive:false});
+cv.addEventListener('touchmove',e=>{
+  if(PINCH && e.touches.length>=2){
+    const s=touchSpan(e);
+    if(PINCH.d>0){
+      const r=cv.getBoundingClientRect();
+      const cx=(s.mx-r.left)*(CFG.W/r.width), cy=(s.my-r.top)*(CFG.H/r.height);
+      zoomAt(cx, cy, s.d/PINCH.d);
+    }
+    PINCH=s; e.preventDefault(); return;
+  }
+  if(!TCH||!e.touches[0])return;
+  const t=e.touches[0], p=toCanvas(t);
   if(Math.hypot(t.clientX-TCH.startX,t.clientY-TCH.startY)>10) TCH.moved=true;
+  if(TCH.onMap && PAN){ if(TCH.moved) dragPan(p.x,p.y); }
+  else Mouse.wheel += (TCH.y-p.y);
   TCH.x=p.x; TCH.y=p.y; Mouse.x=p.x; Mouse.y=p.y; e.preventDefault(); },{passive:false});
-cv.addEventListener('touchend',e=>{ if(TCH && !TCH.moved) Mouse.click=true; TCH=null; },{passive:false});
+cv.addEventListener('touchend',e=>{
+  if(PINCH && e.touches.length<2) PINCH=null;
+  if(TCH && !TCH.moved) Mouse.click=true;
+  TCH=null; PAN=null; },{passive:false});
 function resize(){ const s=Math.min(innerWidth/CFG.W, innerHeight/CFG.H);
   cv.style.width=(CFG.W*s)+'px'; cv.style.height=(CFG.H*s)+'px'; }
 addEventListener('resize',resize); resize();
@@ -560,7 +616,7 @@ function syncProvinceTool(){
 let G=null;
 function newGame(){
   G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, mapFocus:START_MAP_FOCUS,
-      log:[], tab:'국정',
+      mapZoom:1, mapPan:{x:0,y:0}, log:[], tab:'국정',
       sel:null, hover:null, nat:'kor', ended:false,
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
@@ -645,6 +701,7 @@ function newGame(){
     P.cy=(sy/P.cells.length+.5)*CFG.CELL;
   });
   G.plateDirty=true; G.view='nat';
+  setMapPreset(START_MAP_FOCUS);          // 보는 창은 지방을 다 만든 뒤에 잡는다
 
   /* 세력 */
   Object.keys(NATIONS).forEach(k=>{
@@ -1910,15 +1967,63 @@ const MAP_NAMES={
   ryuk:'유구',taiw:'타이완'
 };
 
-/* 전체 판은 유지하되, 놀이의 중심인 한반도는 기본으로 세 배 확대한다.
-   지도판·경계·이름은 그대로 두고 보는 창만 옮긴다 — 규칙은 하나도 건드리지 않는다. */
-const MAP_VIEWS={
-  all:{zoom:1,x:0,y:0},
-  korea:{zoom:3,x:470,y:136}
+/* ================================================================
+   보는 창 — 얼마나 당겨 보고 어디를 보는가
+   ----------------------------------------------------------------
+   지도 창은 888×480으로 옆으로 길고, 한반도는 68×128로 세로로 길다.
+   그래서 배율을 하나로 못 박아 두면 어떻게 잡아도 고을이 작다.
+   배율과 자리를 플레이어에게 넘긴다 — 휠로 당기고, 끌어서 옮긴다.
+   지도판·경계·이름은 그대로 두고 보는 창만 움직이므로
+   전쟁·인접 판정은 하나도 달라지지 않는다.
+   ================================================================ */
+const MAP_ZOOM_MIN=1, MAP_ZOOM_MAX=8;
+/* 한반도가 창 높이에 꼭 차는 배율. 실제 좌표에서 재어 둔 값이다. */
+const KOR_BOX={x0:585,y0:154,x1:653,y1:282};
+const MAP_PRESETS={
+  all:  ()=>({ zoom:1, cx:MAP_GEO.width/2, cy:MAP_GEO.height/2 }),
+  korea:()=>({ zoom:Math.min(MAP_ZOOM_MAX, (MAP_GEO.height/(KOR_BOX.y1-KOR_BOX.y0))*0.92),
+               cx:(KOR_BOX.x0+KOR_BOX.x1)/2, cy:(KOR_BOX.y0+KOR_BOX.y1)/2 })
 };
-function activeMapView(){ return MAP_VIEWS[G&&G.mapFocus==='all'?'all':'korea']; }
+function mapZoom(){ return (G&&G.mapZoom)||1; }
+function activeMapView(){ return { zoom:mapZoom(), x:(G&&G.mapPan?G.mapPan.x:0), y:(G&&G.mapPan?G.mapPan.y:0) }; }
+/* 창이 지도 밖으로 나가지 않게 잡아 둔다 */
+function clampPan(){
+  if(!G||!G.mapPan) return;
+  const z=mapZoom(), vw=MAP_GEO.width/z, vh=MAP_GEO.height/z;
+  G.mapPan.x=clamp(G.mapPan.x, 0, Math.max(0, MAP_GEO.width-vw));
+  G.mapPan.y=clamp(G.mapPan.y, 0, Math.max(0, MAP_GEO.height-vh));
+}
+/* 가운데를 정해 창을 옮긴다 */
+function centerMap(cx,cy){
+  const z=mapZoom();
+  G.mapPan={ x:cx-MAP_GEO.width/(2*z), y:cy-MAP_GEO.height/(2*z) };
+  clampPan();
+}
+function setMapPreset(name){
+  const p=(MAP_PRESETS[name]||MAP_PRESETS.korea)();
+  G.mapZoom=clamp(p.zoom, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
+  G.mapFocus=name;
+  centerMap(p.cx, p.cy);
+}
+/* 짚은 자리를 붙들고 당긴다 — 커서 밑의 땅이 그대로 커서 밑에 남는다 */
+function zoomAt(sx, sy, factor){
+  if(!G||!G.mapPan) return;
+  const before=mapScreenToLocal(sx,sy);
+  const z0=mapZoom();
+  G.mapZoom=clamp(z0*factor, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
+  if(G.mapZoom===z0) return;
+  if(before){
+    G.mapPan.x=before.x-(sx-CFG.GX)/G.mapZoom;
+    G.mapPan.y=before.y-(sy-CFG.GY)/G.mapZoom;
+  }
+  G.mapFocus= G.mapZoom<=MAP_ZOOM_MIN+0.01? 'all' : 'free';
+  clampPan();
+}
+function overMap(x,y){
+  return x>=CFG.GX && y>=CFG.GY && x<=CFG.GX+MAP_GEO.width && y<=CFG.GY+MAP_GEO.height;
+}
 function mapScreenToLocal(x,y){
-  if(x<CFG.GX||y<CFG.GY||x>CFG.GX+MAP_GEO.width||y>CFG.GY+MAP_GEO.height) return null;
+  if(!overMap(x,y)) return null;
   const V=activeMapView();
   return {x:(x-CFG.GX)/V.zoom+V.x,y:(y-CFG.GY)/V.zoom+V.y};
 }
@@ -2046,17 +2151,28 @@ function drawCountryLabels(g){
 
 function drawMapModeControl(g){
   const x=CFG.GX+10,y=CFG.GY+10,w=57,h=23;
-  panel(g,x-3,y-3,w*2+6,h+6,.78);
+  panel(g,x-3,y-3,w*2+6,h+6,.97);
   btn(g,x,y,w,h,'지형',G.mapMode==='terrain',()=>{G.mapMode='terrain';});
   btn(g,x+w,y,w,h,'정치',G.mapMode==='political',()=>{G.mapMode='political';});
 }
 
 function drawMapFocusControl(g){
   const w=82,h=27,x=CFG.GX+MAP_GEO.width-w*2-10,y=CFG.GY+10;
-  panel(g,x-3,y-3,w*2+6,h+6,.88);
-  btn(g,x,y,w,h,'한반도 확대',G.mapFocus==='korea',()=>{G.mapFocus='korea';});
-  btn(g,x+w,y,w,h,'동아시아',G.mapFocus==='all',()=>{G.mapFocus='all';});
-  if(inRect(Mouse,{x,y,w:w*2,h})) G.tip='F 키로 한반도 확대와 동아시아 전체 지도를 바꾼다.';
+  panel(g,x-3,y-3,w*2+6,h+6,.97);
+  btn(g,x,y,w,h,'한반도',G.mapFocus==='korea',()=>{ setMapPreset('korea'); });
+  btn(g,x+w,y,w,h,'동아시아',G.mapFocus==='all',()=>{ setMapPreset('all'); });
+  if(inRect(Mouse,{x,y,w:w*2,h})) G.tip='F 키로 한반도와 동아시아 전체를 오간다.';
+
+  /* 배율 — 휠로도 되지만, 눈에 보이는 손잡이가 하나는 있어야 한다 */
+  const zy=y+h+9, bw=30, rw=w*2-bw*2;
+  panel(g,x-3,zy-3,w*2+6,h+6,.97);
+  const z=mapZoom();
+  btn(g,x,zy,bw,h,'－',false, z>MAP_ZOOM_MIN+0.01? ()=>zoomAt(CFG.GX+MAP_GEO.width/2, CFG.GY+MAP_GEO.height/2, 1/1.35):null, z<=MAP_ZOOM_MIN+0.01);
+  g.fillStyle='#c9bfa8'; g.font='12px serif'; g.textAlign='center';
+  g.fillText(z.toFixed(1)+'배', x+bw+rw/2, zy+18); g.textAlign='left';
+  btn(g,x+bw+rw,zy,bw,h,'＋',false, z<MAP_ZOOM_MAX-0.01? ()=>zoomAt(CFG.GX+MAP_GEO.width/2, CFG.GY+MAP_GEO.height/2, 1.35):null, z>=MAP_ZOOM_MAX-0.01);
+  if(inRect(Mouse,{x:x,y:zy,w:w*2,h}))
+    G.tip='지도 위에서 휠을 굴리면 짚은 자리를 붙들고 당긴다. 끌면 옮긴다. (＋ － 키로도 된다)';
 }
 
 function drawMap(g){
@@ -2095,12 +2211,13 @@ function drawMap(g){
   }
   if(!political){ ensureCloudLayer(); g.save(); g.globalAlpha=.68; g.drawImage(MAPCLOUDS,CFG.GX,CFG.GY); g.restore(); }
   // 확대하면 큰 국호는 화면 밖으로 나가 조각만 보인다. 그때는 걷는다.
-  if(G.mapFocus==='all') drawCountryLabels(g);
+  const 당김 = mapView.zoom>1.2;
+  if(!당김) drawCountryLabels(g);
 
   Object.values(G.provs).forEach(P=>{
     const R=MAPVIS.regions[P.id], a=MAPVIS.anchors[P.id], cx=a.x, cy=a.y;
     P.cx=R.label[0]; P.cy=R.label[1];
-    const showName=(G.mapFocus==='korea'&&P.nat==='kor')||!political||P.cap||P.id===G.sel||P.id===G.hover;
+    const showName=(당김&&P.nat==='kor')||!political||P.cap||P.id===G.sel||P.id===G.hover;
     if(showName){
       const ax=CFG.GX+R.anchor[0], ay=CFG.GY+R.anchor[1];
       if(!political&&Math.hypot(cx-ax,cy-ay)>9){
@@ -2109,9 +2226,10 @@ function drawMap(g){
       // 글자는 확대에 그대로 딸려 커지면 안 된다 — 화면에서 늘 비슷한 크기로 보이게 줄여 둔다.
       // 확대했을 때 이웃 나라 이름까지 크게 쓰면 요동과 평북이 붙어 한 낱말로 읽힌다.
       // 우리 고을은 크게, 이웃은 화면에서 작게 — 봐야 할 것과 알아만 둘 것을 가른다.
-      const labelSize = mapView.zoom>1
-        ? (P.nat==='kor'? (R.small?5.1:5.7) : (R.small?8.5:9.5)/mapView.zoom*1.2)
-        : (R.small?8.5:9.5);
+      const 밑크기=R.small?8.5:9.5, z=mapView.zoom;
+      const 화면크기 = 밑크기 * (P.nat==='kor'? clamp(1+(z-1)*0.4, 1, 1.8)
+                                              : clamp(1+(z-1)*0.1, 1, 1.2));
+      const labelSize = 화면크기/z;
       const label=MAP_NAMES[P.id]||P.nm;
       g.textAlign='center'; g.font=(R.small?'':'600 ')+labelSize+'px serif';
       if(P.id===G.sel){
@@ -2126,8 +2244,10 @@ function drawMap(g){
     if(P.cap){ const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
       g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1*inv; g.beginPath();
       g.arc(qx,qy,3.3/Math.sqrt(mapView.zoom),0,Math.PI*2); g.fill(); g.stroke(); }
-    if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14,cy-3,2.5*inv,0,7); g.fill(); }
-    if(showName&&officialAt(P.id)){ g.fillStyle='rgba(113,190,125,.9)'; g.beginPath(); g.arc(cx-14,cy-3,2.3*inv,0,7); g.fill(); }
+    // 어지러움·수령 표는 이름 옆에 붙어 있어야 한다.
+    // 자리까지 확대에 딸려 가면 이름에서 멀찍이 떨어져 누구 것인지 알 수 없다.
+    if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14*inv,cy-3*inv,2.5*inv,0,7); g.fill(); }
+    if(showName&&officialAt(P.id)){ g.fillStyle='rgba(113,190,125,.9)'; g.beginPath(); g.arc(cx-14*inv,cy-3*inv,2.3*inv,0,7); g.fill(); }
     g.textAlign='left';
   });
 
@@ -2840,7 +2960,7 @@ const SLOTS=['auto','1','2','3'];
 function slotKey(s){ return CFG.SAVE+'_'+s; }
 function packSave(){
   const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn,
-    mapMode:G.mapMode, mapFocus:G.mapFocus,
+    mapMode:G.mapMode, mapFocus:G.mapFocus, mapZoom:G.mapZoom, mapPan:G.mapPan,
     provs:{}, nations:G.nations, officials:G.officials, pool:G.pool,
     factions:G.factions, policies:G.policies, polSince:G.polSince,
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
@@ -2876,6 +2996,9 @@ function loadGame(slot){
     G.year=d.year; G.era=d.era; G.turn=d.turn;
     G.mapMode=MAP_MODE_PARAM?START_MAP_MODE:(d.mapMode||'terrain');
     G.mapFocus=MAP_FOCUS_PARAM?START_MAP_FOCUS:(d.mapFocus||'korea');
+    if(MAP_FOCUS_PARAM || d.mapZoom==null) setMapPreset(G.mapFocus);
+    else { G.mapZoom=clamp(d.mapZoom,MAP_ZOOM_MIN,MAP_ZOOM_MAX);
+           G.mapPan={x:(d.mapPan&&d.mapPan.x)||0, y:(d.mapPan&&d.mapPan.y)||0}; clampPan(); }
     G.nations=d.nations; G.officials=d.officials; G.pool=d.pool;
     G.factions=d.factions; G.policies=d.policies; G.log=d.log||[];
     G.polSince=d.polSince||{}; G.scores=d.scores||[]; G.ended=!!d.ended;
@@ -3140,7 +3263,15 @@ function tick(){
     Key.pressed['KeyM']=false; G.mapMode=G.mapMode==='terrain'?'political':'terrain';
   }
   if(Key.pressed['KeyF'] && !창 && SCENE==='play'){
-    Key.pressed['KeyF']=false; G.mapFocus=G.mapFocus==='korea'?'all':'korea';
+    Key.pressed['KeyF']=false; setMapPreset(G.mapFocus==='all'?'korea':'all');
+  }
+  // ＋ － 로도 당긴다. 지도 한가운데를 붙들고 움직인다.
+  if(!창 && SCENE==='play'){
+    const 한가운데=[CFG.GX+MAP_GEO.width/2, CFG.GY+MAP_GEO.height/2];
+    if(Key.pressed['Equal']||Key.pressed['NumpadAdd']){
+      Key.pressed['Equal']=Key.pressed['NumpadAdd']=false; zoomAt(한가운데[0],한가운데[1],1.35); }
+    if(Key.pressed['Minus']||Key.pressed['NumpadSubtract']){
+      Key.pressed['Minus']=Key.pressed['NumpadSubtract']=false; zoomAt(한가운데[0],한가운데[1],1/1.35); }
   }
   // 오른쪽 판이 여섯 갈래가 되었으니 손으로도 넘길 수 있어야 한다
   if(!창 && SCENE==='play'){
