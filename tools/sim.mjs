@@ -375,9 +375,9 @@ const PLANS = {
           const a = ACTIONS.find(x => x.id === id);
           if(!a || !a.need(p)) return;
           if((N.adm || 0) < a.adm) return;
-          const c = api.call('actCost', a, p);
-          if(N.gold < c * 1.5) return;
-          N.gold -= c; N.adm -= a.adm; a.run(p); did = true;
+          const q = api.call('actQuote', a, p);
+          if(!q.ok || N.gold < q.c * 1.5) return;
+          api.call('pay', q, a.adm, () => a.run(p)); did = true;
         };
         if(hot.unrest > 45) tryAct('jin', hot);
         if(!did){
@@ -467,18 +467,54 @@ const PLANS = {
           const o = api.call('warOdds', p);
           if(o && o.p > bp){ bp = o.p; best = p; }
         });
-        if(best && bp > 0.62 && (N.adm||0) >= gong.adm){
-          const c = api.call('actCost', gong, best);
-          if(N.gold >= c){
-            N.gold -= c; N.adm -= gong.adm; gong.run(best); api.call('recalc'); continue;
-          }
+        if(best && bp > 0.62){
+          const q = api.call('actQuote', gong, best);
+          if(q.ok){ api.call('pay', q, gong.adm, () => gong.run(best)); continue; }
         }
         /* 못 이길 것 같으면 군사를 불린다 */
         const mine = api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop);
         if(!mine.length || (N.adm||0) < mo.adm) break;
-        const p = mine[0], c = api.call('actCost', mo, p);
-        if(N.gold < c * 1.2) break;
-        N.gold -= c; N.adm -= mo.adm; mo.run(p); api.call('recalc');
+        const p = mine[0], q = api.call('actQuote', mo, p);
+        if(!q.ok || N.gold < q.c * 1.2) break;
+        api.call('pay', q, mo.adm, () => mo.run(p));
+      }
+    }
+  },
+  /* 밀어붙인다 — 사람이 작정하고 두는 흉내.
+     정무를 다 쓰면 별칙으로 국고를 태우고, 이길 낌새가 반만 넘어도 친다.
+     "얼마나 빨리 다 먹을 수 있나"의 상한을 재기 위한 두는 법이다. */
+  rush: {
+    nm: '밀어붙임',
+    play(api){
+      const G = api.get('G'), N = G.nations.kor;
+      api.call('autoAssign');
+      const ACTIONS = api.get('ACTIONS');
+      const gong = ACTIONS.find(a => a.id === 'gong');
+      const mo   = ACTIONS.find(a => a.id === 'mo');
+      /* 정무가 남으면 정무로, 다 썼으면 별칙으로 — 화면의 규칙 그대로 */
+      /* 화면이 쓰는 규칙을 그대로 쓴다 — 싸움은 별칙으로 살 수 없다 */
+      const 지른다 = (act, p) => {
+        const q = api.call('actQuote', act, p);
+        if(!q.ok) return false;
+        api.call('pay', q, act.adm, () => act.run(p));
+        return true;
+      };
+      let guard = 0;
+      while(guard++ < 60){
+        let best = null, bp = 0;
+        Object.values(G.provs).forEach(p => {
+          if(!gong.need(p)) return;
+          const o = api.call('warOdds', p);
+          if(o && o.p > bp){ bp = o.p; best = p; }
+        });
+        if(best && bp > 0.50){ if(지른다(gong, best)) continue; }
+        /* 못 이길 것 같으면 국경 고을에 군사를 몰아넣는다 */
+        const 국경 = api.call('natProvs','kor')
+          .filter(p => mo.need(p) && [...p.adj].some(id => G.provs[id] && G.provs[id].nat !== 'kor'))
+          .sort((a,b) => b.pop - a.pop);
+        const 대상 = 국경[0] || api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop)[0];
+        if(!대상) break;
+        if(!지른다(mo, 대상)) break;
       }
     }
   },

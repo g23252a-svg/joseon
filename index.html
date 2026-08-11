@@ -48,10 +48,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -725,7 +725,11 @@ function newGame(){
     P.farm = ri(10,22) + (P.tag==='곡창'?6:0);
     P.trade= ri(6,16)  + (P.tag==='상업'||P.tag==='교역'||P.tag==='중계'?7:0);
     P.fort = P.cap? ri(3,4) : ri(0,2);
-    P.army = P.cap? ri(4000,7000) : ri(800,3000);
+    // 시작 병력도 스스로 기르는 수준에서 연다.
+    // 예전에는 여기가 옛 셈(800~3000)에 남아 있어, 명이 제 평형의 9%로 판을 열었다.
+    // 요동이 천삼백으로 판을 열고 다섯 해 뒤에야 만육천이 되니, 그 틈이 곧
+    // 정복의 지름길이었다 — 1414년에 통일이 되는 까닭이 여기 있었다.
+    P.army = Math.round(garrisonTarget(P) * rnd(0.9,1.1)) + (P.cap? 2500 : 0);
   });
   /* 5) 인접 — 땅으로 붙은 곳 */
   Object.values(G.provs).forEach(P=>{ P.adj=new Set(); });
@@ -1360,7 +1364,12 @@ function aiTurn(B){
        다만 이제는 주사위가 아니라 사이를 본다. 형제와는 싸우지 않는다. */
     const d=dipOf(k);
     let 기세 = 0.04 + (G.era>=1?0.03:0) + (G.era>=3?0.04:0);
-    if(d && d.war) 기세 += 0.22;
+    if(d && d.war) 기세 += 0.30;
+    // 빼앗긴 제 땅이 많을수록 더 자주 군사를 낸다
+    기세 += clamp(natProvs('kor').filter(p=>p.home===k).length*0.05, 0, 0.35);
+    // 전쟁 중에는 한 해에 여러 번 밀어붙인다. 이쪽만 여러 번 치던 것이 어긋남이었다.
+    const 횟수 = (d&&d.war)? 3 : 1;
+    for(let 시도=0; 시도<횟수; 시도++)
     if(Math.random()<기세){
       const mine=natProvs(k);
       let best=null, bs=0;
@@ -1519,7 +1528,10 @@ const ACTIONS=[
       p.unrest=clamp(p.unrest-25,0,100); N.food-=곡;
       N.stab=clamp(N.stab+1.5,0,100);
       log(p.nm+'에 곡식 '+num(곡)+'을 풀었다.'); snd('relief'); fxPop(p.id,'진휼','#8fbf6a'); } },
-  { id:'gong', nm:'친다', cost:120, adm:2, need:p=>p.nat!=='kor'&&adjToKor(p),
+  /* 싸움만은 국고로 살 수 없다. 별칙은 조정이 지쳐도 돈으로 밀어붙이는 손이지만,
+     군사를 일으키는 일은 조정이 정해야 한다. 이것을 열어 두었더니 돈만 있으면
+     한 해에 열 번도 칠 수 있었고, 그것이 곧 스무 해 만의 통일이었다. */
+  { id:'gong', nm:'친다', cost:120, adm:2, noByeol:true, need:p=>p.nat!=='kor'&&adjToKor(p),
     /* 눌러 보고 나서야 아는 싸움은 선택이 아니다. 미리 낌새를 보여 준다. */
     desc:p=>{ const o=warOdds(p);
       if(!o) return '인접한 우리 고을이 없다.';
@@ -2221,6 +2233,16 @@ function pay(q, admCost, fn){
   if(q.별칙) byeolPay(); else N.adm-=admCost;
   fn(); recalc();
 }
+/* 명령 하나의 값 — 화면과 시뮬레이터가 같은 규칙을 쓰도록 한 자리에 둔다.
+   싸움(noByeol)은 정무가 남아 있어야만 할 수 있다. */
+function actQuote(a, p){
+  const base=actCost(a,p);
+  const N=G.nations.kor, 손=(N.adm||0)>=a.adm, 별칙=!손;
+  const 못산다 = !!(a.noByeol && 별칙);
+  const c = Math.round(base * (별칙 && !a.noByeol ? byeolMul() : 1));
+  return { 별칙, 못산다, c, 돈:N.gold>=c, ok: N.gold>=c && !못산다 && !G.ended };
+}
+
 /* 명령 단추 한 줄 — 이름·값·정무를 함께 그린다 */
 function actBtn(g,x,y,w,h,label,admCost,baseCost,ok,fn,tip){
   const q=quote(admCost, baseCost);
@@ -3325,23 +3347,23 @@ function drawBottom(g){
     let bx=x+16, by=y+58;
     ACTIONS.forEach(a=>{
       const ok=a.need(P);
-      const 손=(N.adm||0)>=a.adm;
-      const 별칙=!손;                                  // 정무가 모자라면 국고로 산다
-      const c=Math.round(actCost(a,P) * (별칙? byeolMul() : 1));
-      const 돈=N.gold>=c;
-      const can=ok&&돈;
+      const q=actQuote(a,P);
+      const { 별칙, 못산다, c, 돈 } = q;
+      const can=ok&&q.ok;
       btn(g, bx, by, 116, 28, a.nm+'  '+num(c), 별칙&&can,
         can? ()=>{ N.gold-=c;
           if(별칙) byeolPay(); else N.adm-=a.adm;
           a.run(P); recalc(); } : null, !can);
       g.fillStyle= !can? 'rgba(90,86,80,.5)' : (별칙?'rgba(196,140,74,.95)':'rgba(224,189,118,.7)');
       g.font='9px serif';
-      g.fillText(별칙? ('별칙 x'+byeolMul().toFixed(1)) : ('정무 '+a.adm), bx+2, by+38);
+      g.fillText(못산다? ('정무 '+a.adm+' 필요') : 별칙? ('별칙 x'+byeolMul().toFixed(1)) : ('정무 '+a.adm),
+                 bx+2, by+38);
       if(inRect(Mouse,{x:bx,y:by,w:116,h:28}))
         G.tip = actDesc(a,P)
-          + (ok? (돈? (별칙? '  ·  정무를 다 썼다. 별칙으로 밀어붙이면 값이 '+byeolMul().toFixed(1)+'배, 신하 충성 −3, 민심 −0.6' : '')
-                    : '  · 국고가 모자란다')
-               : '  · 지금은 할 수 없다');
+          + (못산다? '  ·  군사를 일으키는 일은 국고로 살 수 없다. 정무 '+a.adm+'이 남아 있어야 한다'
+             : ok? (돈? (별칙? '  ·  정무를 다 썼다. 별칙으로 밀어붙이면 값이 '+byeolMul().toFixed(1)+'배, 신하 충성 −3, 민심 −0.6' : '')
+                      : '  · 국고가 모자란다')
+                 : '  · 지금은 할 수 없다');
       bx+=122;
     });
   }
