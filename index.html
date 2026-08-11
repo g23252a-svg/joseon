@@ -48,10 +48,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.4.2';
+const VERSION = '0.5.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -69,6 +69,18 @@ const rnd=(a,b)=>a+Math.random()*(b-a);
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 function hash2(x,y){ let n=x*374761393+y*668265263; n=(n^(n>>13))*1274126177; return ((n^(n>>16))>>>0)/4294967295; }
 function num(n){ return Math.round(n).toLocaleString('ko-KR'); }
+/* 조사 — 받침이 있느냐로 갈린다.
+   '함경북도이(가)' 처럼 괄호를 치고 넘어가던 자리를 제대로 적는다. */
+function 받침(w){
+  if(!w) return false;
+  const c=w.charCodeAt(w.length-1);
+  if(c<0xAC00||c>0xD7A3) return false;           // 한글이 아니면 그냥 넘긴다
+  return (c-0xAC00)%28 !== 0;
+}
+function 이가(w){ return 받침(w)? '이':'가'; }
+function 은는(w){ return 받침(w)? '은':'는'; }
+function 을를(w){ return 받침(w)? '을':'를'; }
+function 과와(w){ return 받침(w)? '과':'와'; }
 
 /* ---------------------------------------------------------------- 입력 */
 const Key={pressed:{},down:{}};
@@ -244,6 +256,23 @@ const SEAL_UV={ '상':0, '중':1, '하':2, '난세':3 };
 /* ================================================================
    자료
    ================================================================ */
+/* ================================================================
+   난이도
+   ----------------------------------------------------------------
+   이웃이 제대로 싸우게 되면서 배우기 전에 죽는 판이 생겼다.
+   판을 통째로 무르게 만드는 대신, 고르게 한다.
+   ================================================================ */
+const DIFFS=[
+  { nm:'순한맛', note:'이웃이 덜 문다. 판을 익히기에 좋다.',
+    ai:0.55, unrest:0.75, gold:1.35, thr:0.74 },
+  { nm:'보통',   note:'이 놀이가 뜻한 그대로.',
+    ai:1.00, unrest:1.00, gold:1.00, thr:0.66 },
+  { nm:'매운맛', note:'이웃이 사납다. 한 번 밀리면 좀처럼 못 돌아온다.',
+    ai:1.55, unrest:1.25, gold:0.80, thr:0.58 }
+];
+let START_DIFF = 1;
+function diffOf(){ return DIFFS[clamp((G&&G.diff!=null)? G.diff : START_DIFF, 0, DIFFS.length-1)]; }
+
 /* 시대 — 연도가 넘어가면 바뀐다 */
 const ERAS=[
   { y:1392, nm:'조선 전기', desc:'건국. 농본과 예치의 시대.', tech:1 },
@@ -618,6 +647,98 @@ const PEOPLE=[{"nm":"정도전","f":1342,"to":1398,"pol":95,"eco":78,"mil":68,"d
 
 const POLICIES=[{"id":"nongbon","nm":"농본","era":0,"cost":60,"good":"식량 +18%, 개간 비용 -20%","bad":"상업 -12%, 장시 수입 늘지 않는다"},{"id":"yechi","nm":"예치","era":0,"cost":50,"good":"민심 +6, 신하 충성 +5","bad":"기술 -1/년, 개혁 정책 비용 +20%"},{"id":"gunjeok","nm":"군적","era":0,"cost":70,"good":"모병 비용 -25%, 병력 상한 +15%","bad":"인구 성장 -10%, 민심 -3"},{"id":"sadae","nm":"사대교린","era":0,"cost":80,"good":"큰 나라의 침공 위험 -40%","bad":"해마다 국고 -8%, 기술 자립 -1/년"},{"id":"uibyeong","nm":"의병 장려","era":1,"cost":100,"good":"침공당한 지방 방어 +30%, 민심 +5","bad":"농지 산출 -12%, 그 병력을 조정이 못 부린다"},{"id":"hunryeon","nm":"훈련도감","era":1,"cost":130,"good":"상비군 유지, 병력 회복 두 배","bad":"해마다 국고 -15%, 지방 모병 인구 -8%"},{"id":"daedong","nm":"대동법","era":2,"cost":140,"good":"재정 +20%, 백성 부담이 고르게 되어 민심 +5","bad":"지주 반발로 신하 충성 -8, 붕당 갈등 +5"},{"id":"silhak","nm":"실학","era":2,"cost":120,"good":"기술 +3/년, 건물 비용 -10%","bad":"명분을 잃어 민심 -4, 예치 정책과 함께 못 쓴다"},{"id":"swaeguk","nm":"쇄국","era":2,"cost":100,"good":"민심 +10, 외세 요구 사건이 늦게 온다","bad":"기술 -3/년, 교역 재정 -20%"},{"id":"gaehwa","nm":"개화","era":3,"cost":170,"good":"기술 +5/년, 근대 건물 한 시대 먼저 해금","bad":"민심 -8, 수구파 반발 사건이 잦아진다"},{"id":"bugang","nm":"부국강병","era":3,"cost":190,"good":"군사력 +18%, 성곽 비용 -20%","bad":"군 유지비 +15%, 식량 -8%"},{"id":"chagwan","nm":"차관 도입","era":3,"cost":150,"good":"즉시 국고 +400, 건설 비용 -25%","bad":"해마다 이자로 재정 -6%, 외세 간섭 사건 +"},{"id":"mulsan","nm":"물산장려","era":4,"cost":200,"good":"민심 +10, 지방 상업 +15%","bad":"탄압으로 재정 -12%, 신하를 잃을 수 있다"},{"id":"yahak","nm":"야학","era":4,"cost":180,"good":"기술 +3/년, 민심 +5","bad":"재정 -10%, 발각되면 해마다 신하 하나가 잡혀간다"},{"id":"toji","nm":"토지개혁","era":5,"cost":260,"good":"민심 +15, 식량 +12%","bad":"지주가 떠나 재정 -18%, 신하 충성 -10"},{"id":"gyoyuk","nm":"의무교육","era":5,"cost":240,"good":"기술 +3/년, 인구 성장 +12%","bad":"재정 -12%, 효과는 열 해 뒤부터 나온다"},{"id":"suchul","nm":"수출주도","era":6,"cost":320,"good":"재정 +35%, 항만과 공장 산출 +20%","bad":"농촌 인구 -15%, 민심 -6"},{"id":"junghwa","nm":"중화학공업","era":6,"cost":360,"good":"공업·군수 산출 +30%, 군비 -15%","bad":"국고 -20%, 물가가 올라 민심 -8"},{"id":"bokji","nm":"복지","era":7,"cost":400,"good":"민심 +14, 인구 성장 +8%","bad":"재정 -15%, 한 번 펴면 거두기 어렵다"},{"id":"yeongu","nm":"연구개발","era":7,"cost":440,"good":"기술 +7/년, 반도체·전산 산출 +25%","bad":"재정 -18%, 열매는 다섯 해 뒤에 온다"}];
 
+
+/* ================================================================
+   되풀이되는 일 — 비어 있던 해를 채운다
+   ----------------------------------------------------------------
+   못박힌 사건은 서른넷뿐이라 1453년 다음이 1498년이었다. 그사이 마흔다섯 해는
+   결산 창만 넘겼다. 여기 있는 일들은 해가 정해져 있지 않고, 시대와 지금 형편이
+   맞을 때 찾아온다. 한 번 겪으면 한참 뒤에야 다시 온다.
+   ================================================================ */
+const RECUR=[
+ { id:'gamun', era:[0,3], t:'문벌의 청', b:'오래된 집안이 제 자제를 음서로 올려 달라 청한다. 조정의 자리는 한정되어 있다.',
+   c:[{t:'청을 들어준다',r:'집안들이 흡족해했다. 과거로 오른 이들이 등을 돌렸다.',e:{stab:5,legitimacy:-4,tech:-3}},
+      {t:'과거로만 뽑는다 이르고 물리친다',r:'젊은 관리들이 힘을 얻었다. 문벌의 원망이 쌓였다.',e:{tech:6,legitimacy:4,stab:-5}},
+      {t:'자리를 늘려 양쪽을 다 앉힌다',r:'다툼은 가라앉았으나 녹봉이 늘었다.',e:{stab:3,gold:-7}}]},
+ { id:'hyungnyeon', era:[0,7], when:()=>G.nations.kor.food<600, t:'봄이 길다', b:'지난해 거둔 것이 얕아 봄에 곳간이 비었다. 백성이 산으로 든다.',
+   c:[{t:'국고를 헐어 곡식을 사들인다',r:'굶는 이가 줄었다. 국고가 크게 상했다.',e:{gold:-18,food:14,stab:6}},
+      {t:'부자에게 곡식을 내라 이른다',r:'곳간이 열렸으나 그들이 조정을 원망했다.',e:{food:10,stab:3,legitimacy:-5}},
+      {t:'참으라 이르고 세금만 미룬다',r:'견딘 고을도 있었고 비어 버린 고을도 있었다.',e:{gold:-5,stab:-8,unrest:8}}]},
+ { id:'wagu', era:[0,2], t:'남해의 돛', b:'왜구가 남쪽 포구를 노략한다. 잡으러 나가면 달아나고, 물러나면 다시 온다.',
+   c:[{t:'수군을 늘려 바다에서 막는다',r:'포구가 조용해졌다. 배를 짓고 사람을 먹이는 값이 컸다.',e:{army:8,gold:-12,relJ:-6}},
+      {t:'포구를 열어 장사로 달랜다',r:'노략이 줄고 물화가 오갔다. 명분을 잃었다는 말이 돌았다.',e:{gold:8,relJ:14,legitimacy:-5}},
+      {t:'섬을 쳐서 뿌리를 뽑는다',r:'한동안 잠잠했다. 배와 사람을 잃었고 바다 건너의 원한이 남았다.',e:{army:-8,stab:5,relJ:-18,legitimacy:6}}]},
+ { id:'yeokbyeong', era:[0,5], t:'역병이 돈다', b:'고을 몇 곳에서 같은 병으로 사람이 죽는다. 의원이 모자라고 약재가 없다.',
+   c:[{t:'약재를 풀고 의원을 보낸다',r:'번지는 것을 늦추었다. 국고가 상했다.',e:{gold:-14,stab:5,unrest:-6}},
+      {t:'고을을 막아 오가지 못하게 한다',r:'번지지는 않았으나 갇힌 고을의 원망이 컸다.',e:{unrest:10,stab:-4,food:-4}},
+      {t:'의서를 펴내 널리 알린다',r:'당장은 더뎠으나 뒷날의 밑천이 되었다.',e:{res:35,tech:4,gold:-6}}]},
+ { id:'seowon', era:[1,3], t:'서원이 늘어난다', b:'고을마다 서원이 서서 땅과 사람을 거느린다. 학문의 터이자 세금이 새는 구멍이다.',
+   c:[{t:'그대로 둔다',r:'사림이 두터워졌다. 세수가 줄고 붕당이 커졌다.',e:{res:40,gold:-10,stab:-4}},
+      {t:'첩설을 금하고 장부를 조사한다',r:'새던 세가 돌아왔다. 유생들이 들고일어났다.',e:{gold:12,stab:-8,legitimacy:-3}},
+      {t:'몇을 남기고 나머지를 거둔다',r:'말은 많았으나 셈은 맞았다.',e:{gold:7,res:12,stab:-4}}]},
+ { id:'gwangsan', era:[2,6], t:'광맥을 찾았다', b:'산에서 은맥이 나왔다는 보고가 올라왔다. 몰래 파는 이들이 이미 모여 있다.',
+   c:[{t:'관에서 직접 캔다',r:'국고가 두터워졌다. 부역에 끌려간 백성이 원망했다.',e:{gold:18,unrest:7,stab:-3}},
+      {t:'상인에게 맡기고 세를 걷는다',r:'덜 벌었으나 손이 덜 갔다. 상인들이 힘을 얻었다.',e:{gold:10,tech:3}},
+      {t:'봉하고 캐지 못하게 한다',r:'다툼의 씨는 없앴다. 이웃 나라가 대신 캐 갔다.',e:{stab:4,gold:-4,legitimacy:3}}]},
+ { id:'pyoryu', era:[2,4], t:'표류해 온 사람들', b:'낯선 배가 부서져 사람 몇이 해안에 닿았다. 말이 통하지 않고 기기와 책을 지녔다.',
+   c:[{t:'거두어 기기와 말을 배운다',r:'천문과 화기의 새 지식이 들어왔다. 유학자들이 못마땅해했다.',e:{res:60,tech:6,stab:-5}},
+      {t:'예를 갖추어 돌려보낸다',r:'이웃 나라와의 사이가 좋아졌다. 배울 기회는 흘려보냈다.',e:{relC:8,relJ:8,legitimacy:4}},
+      {t:'가두고 조정에 보고만 한다',r:'아무 일도 일어나지 않았다. 그것이 이 나라의 답이었다.',e:{stab:2,tech:-3}}]},
+ { id:'amhaeng', era:[1,4], when:()=>natProvs('kor').some(p=>p.unrest>50), t:'암행어사를 보낼까', b:'지방 수령의 수탈을 고하는 글이 잇달아 올라온다. 사실인지 모함인지 알 수 없다.',
+   c:[{t:'몰래 보내 실상을 본다',r:'몇을 파직하니 고을이 조용해졌다. 수령들이 몸을 사렸다.',e:{unrest:-12,stab:6,gold:-6}},
+      {t:'고한 자를 먼저 벌한다',r:'고발이 그쳤다. 수탈은 그치지 않았다.',e:{stab:3,unrest:9,legitimacy:-6}},
+      {t:'고을에 맡기고 지켜본다',r:'스스로 고친 곳도, 더 심해진 곳도 있었다.',e:{unrest:3}}]},
+ { id:'gyeongsin', era:[0,3], t:'경연을 어찌할까', b:'신하들이 날마다 임금과 글을 읽자 청한다. 정사를 볼 시간이 그만큼 준다.',
+   c:[{t:'날마다 연다',r:'임금과 신하가 서로를 알게 되었다. 결단이 느려졌다.',e:{legitimacy:8,stab:4,res:20,gold:-4}},
+      {t:'열흘에 한 번만 연다',r:'정사가 빨라졌다. 신하들이 임금을 멀게 여겼다.',e:{legitimacy:-5,gold:5}},
+      {t:'글 대신 실무를 논하게 한다',r:'셈과 군무를 아는 신하가 늘었다. 명분을 중시하는 이들이 등을 돌렸다.',e:{tech:5,gold:6,stab:-4}}]},
+ { id:'josun', era:[0,3], t:'조운선이 가라앉았다', b:'세곡을 실은 배가 풍랑에 가라앉았다. 해마다 되풀이되는 일이다.',
+   c:[{t:'배를 새로 짓고 뱃길을 고친다',r:'잃는 것이 줄었다. 값이 컸다.',e:{gold:-14,food:8,tech:4}},
+      {t:'뭍길로 옮긴다',r:'가라앉지는 않았으나 사람과 소가 상했다.',e:{food:4,unrest:6,gold:-6}},
+      {t:'그 고을에 물어내게 한다',r:'국고는 지켰다. 그 고을이 조정을 원망했다.',e:{gold:5,unrest:10,legitimacy:-4}}]},
+ { id:'bulgyo', era:[0,2], t:'절의 땅', b:'절이 거느린 땅과 노비가 적지 않다. 거두라는 상소가 올라왔다.',
+   c:[{t:'거두어 국고에 넣는다',r:'재정이 나아졌다. 오래 믿어 온 백성이 술렁였다.',e:{gold:14,unrest:8,legitimacy:-4}},
+      {t:'그대로 둔다',r:'조용했다. 상소를 올린 이들이 실망했다.',e:{stab:3,gold:-4}},
+      {t:'절은 남기고 노비만 놓아준다',r:'양쪽이 조금씩 물러섰다. 호적에 사람이 늘었다.',e:{gold:6,stab:2,food:4}}]},
+ { id:'gaehang2', era:[3,5], t:'철도를 놓자는 말', b:'외국 회사가 철도를 놓아 주겠다 한다. 값은 이권으로 받겠다고 한다.',
+   c:[{t:'맡긴다',r:'길이 빨리 놓였다. 이권이 남의 손에 넘어갔다.',e:{tech:10,gold:-6,legitimacy:-8}},
+      {t:'빚을 내어 우리가 놓는다',r:'더디고 비쌌으나 우리 것이 되었다.',e:{tech:6,gold:-20,legitimacy:6}},
+      {t:'뒤로 미룬다',r:'돈은 아꼈다. 물화가 여전히 소달구지로 갔다.',e:{gold:6,tech:-5}}]},
+ { id:'donghak', era:[3,4], when:()=>G.nations.kor.stab<55, t:'새 가르침이 번진다', b:'고을마다 새 가르침을 따르는 이가 늘어난다. 관에서는 이를 어찌할지 정하지 못했다.',
+   c:[{t:'금하고 우두머리를 잡는다',r:'겉으로는 조용해졌다. 뿌리는 더 깊이 내렸다.',e:{stab:4,unrest:9,legitimacy:-6}},
+      {t:'묻지 않고 두고 본다',r:'번지는 대로 두었다. 고을의 아전이 함부로 하지 못했다.',e:{unrest:-6,stab:-3}},
+      {t:'그들이 말하는 폐단부터 고친다',r:'따르던 이들이 관을 다시 보았다. 지방 지배층이 반발했다.',e:{unrest:-12,stab:6,legitimacy:5,gold:-8}}]},
+ { id:'yuhak', era:[3,6], t:'젊은이를 밖으로 보낼까', b:'서양과 이웃 나라에 사람을 보내 배우게 하자는 청이 올라왔다. 돌아오지 않을 수도 있다.',
+   c:[{t:'많이 보낸다',r:'돌아온 이들이 학교와 공장을 세웠다. 돌아오지 않은 이도 있었다.',e:{res:70,tech:8,gold:-14}},
+      {t:'몇만 골라 보낸다',r:'적게 들이고 적게 얻었다.',e:{res:28,tech:3,gold:-5}},
+      {t:'안에서 가르친다',r:'우리 말로 가르치는 학교가 섰다. 배움의 폭은 좁았다.',e:{res:22,stab:4,gold:-8}}]},
+ { id:'nodong', era:[6,7], t:'공장의 밤', b:'공장의 일이 길고 삯이 얕다는 말이 돈다. 사람들이 일손을 놓기 시작했다.',
+   c:[{t:'삯을 올리고 시간을 줄인다',r:'일터가 조용해지고 사람이 모였다. 수출품 값이 올랐다.',e:{stab:8,gold:-12,unrest:-8}},
+      {t:'주동자를 가려내 물러나게 한다',r:'그해는 넘겼다. 다음 해에 더 크게 왔다.',e:{gold:6,unrest:12,legitimacy:-8}},
+      {t:'법으로 가장 낮은 삯을 정한다',r:'다툼의 자리가 거리에서 국회로 옮겨 갔다.',e:{stab:5,legitimacy:6,gold:-6}}]},
+ { id:'jibang', era:[5,7], t:'서울로만 간다', b:'젊은 사람이 모두 도읍으로 간다. 지방 고을이 비어 간다.',
+   c:[{t:'지방에 공장과 학교를 세운다',r:'몇 고을이 되살아났다. 값이 크고 더뎠다.',e:{gold:-16,stab:6,unrest:-6}},
+      {t:'도읍에 집을 더 짓는다',r:'사람이 더 몰렸다. 지방은 더 비었다.',e:{gold:-8,pop:0,stab:-4,unrest:5}},
+      {t:'그대로 둔다',r:'가는 사람은 가고 남는 사람은 남았다.',e:{stab:-3}}]},
+ { id:'jaebeol', era:[6,7], t:'몇 집안에 몰린다', b:'큰 회사 몇이 산업의 태반을 쥐었다. 빠르지만 위태롭다.',
+   c:[{t:'그들에게 더 밀어준다',r:'수출이 크게 늘었다. 한 곳이 무너지면 다 무너진다.',e:{gold:16,tech:6,stab:-6,legitimacy:-4}},
+      {t:'작은 회사를 키운다',r:'더뎠으나 바탕이 넓어졌다.',e:{gold:-6,stab:6,tech:3}},
+      {t:'문어발을 끊게 한다',r:'셈이 맑아졌다. 한동안 성장이 멎었다.',e:{gold:-10,legitimacy:8,stab:4}}]},
+ { id:'sadaebu', era:[0,2], when:()=>{const f=Object.keys(G.factions); return f.some(x=>G.factions[x]>100/f.length+18);},
+   t:'한쪽으로 기운 조정', b:'한 당이 자리를 거의 다 쥐었다. 밀려난 쪽이 지방에서 세를 기른다.',
+   c:[{t:'그대로 밀고 간다',r:'명령이 빨라졌다. 밀려난 쪽이 다음을 벼렀다.',e:{stab:6,legitimacy:-6}},
+      {t:'밀려난 쪽에서 몇을 불러 쓴다',r:'조정이 넓어졌다. 쥔 쪽이 못마땅해했다.',e:{stab:-3,legitimacy:8,tech:3}},
+      {t:'둘 다 물리고 새 사람을 쓴다',r:'양쪽이 다 원망했다. 조정이 젊어졌다.',e:{stab:-8,tech:6,legitimacy:5}}]},
+ { id:'gungwol', era:[0,4], t:'궁궐을 고칠까', b:'비가 새고 기둥이 상했다. 고치자는 말과 백성의 부역을 아끼자는 말이 함께 올라왔다.',
+   c:[{t:'크게 고쳐 위엄을 세운다',r:'조정의 낯이 섰다. 부역에 시달린 백성이 원망했다.',e:{legitimacy:10,gold:-16,unrest:8}},
+      {t:'비 새는 데만 손본다',r:'값싸게 끝냈다. 사신들이 조정을 얕보았다.',e:{gold:-4,legitimacy:-3}},
+      {t:'미루고 그 돈을 고을에 쓴다',r:'고을이 나아졌다. 궁궐은 더 상했다.',e:{unrest:-8,stab:5,legitimacy:-5}}]},
+ { id:'hwagi', era:[1,3], t:'화기를 어찌 다룰까', b:'새 화약 무기를 얻었다. 다루는 법을 아는 이가 적고, 흘러 나가면 도로 우리를 겨눈다.',
+   c:[{t:'널리 가르쳐 군에 퍼뜨린다',r:'군이 강해졌다. 만드는 법이 밖으로 새어 나갔다.',e:{army:10,tech:6,relC:-5}},
+      {t:'몇 부대만 갖게 하고 감춘다',r:'비밀은 지켰다. 퍼지는 데 오래 걸렸다.',e:{army:4,res:25}},
+      {t:'만드는 법부터 적어 남긴다',r:'당장은 늘지 않았으나 뒷사람이 이어받았다.',e:{res:55,tech:4}}]}
+];
+
 /* 붕당 — 시대에 따라 이름이 바뀐다 */
 const FACTION_SETS=[
   ['훈구','사림'],
@@ -664,7 +785,8 @@ function syncProvinceTool(){
    ================================================================ */
 let G=null;
 function newGame(){
-  G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, mapFocus:START_MAP_FOCUS,
+  G={ year:1392, era:0, turn:0, mode:'play', diff:START_DIFF,
+      mapMode:START_MAP_MODE, mapFocus:START_MAP_FOCUS,
       mapZoom:1, mapPan:{x:0,y:0}, log:[], tab:'국정',
       sel:null, hover:null, nat:'kor', ended:false,
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
@@ -758,7 +880,7 @@ function newGame(){
 
   /* 세력 */
   Object.keys(NATIONS).forEach(k=>{
-    G.nations[k]={ id:k, gold: k==='kor'?600:900, food:400, tech:10,
+    G.nations[k]={ id:k, gold: k==='kor'?Math.round(600*diffOf().gold):900, food:400, tech:10,
       stab:60, manpower:0, ai:k!=='kor' };
   });
   /* 이웃과의 사이 — 1392년의 자리에서 시작한다.
@@ -987,7 +1109,8 @@ function endTurn(){
       // 민심 — 수령이 없다고 벌하지 않는다. 좋은 수령을 앉히면 좋아진다.
       let drift = (gov? (-1.4-govP*1.2) : 0.05) + tagVal(P,'drift',0);
       if(!내땅) drift += 1.8;                    // 빼앗긴 백성은 쉬이 가라앉지 않는다
-      drift += 전쟁피로;                          // 싸움이 길어지면 뒤가 시끄럽다
+      drift += 전쟁피로;
+      if(drift>0) drift *= diffOf().unrest;      // 난이도는 오르는 쪽에만 손댄다                          // 싸움이 길어지면 뒤가 시끄럽다
       P.unrest = clamp(P.unrest + drift + (P.fort>2?-0.2:0.15), 0, 100);
       /* 다스림이 오래 이어지면 비로소 본토가 된다 */
       if(!내땅){
@@ -1211,8 +1334,25 @@ function endTurn(){
     evs.forEach(e=>{ G.evDone[e.y+e.t]=1; });
     G.evQueue=(G.evQueue||[]).concat(evs);
     G.pendingEvent=G.evQueue.shift();
+  } else {
+    /* 못박힌 해가 아니면 되풀이되는 일 가운데 하나를 부른다.
+       한 번 겪은 일은 한참 뒤에야 다시 온다 — 같은 물음을 이태 걸러 받으면
+       그것은 물음이 아니라 소음이다. */
+    G.minorDone=G.minorDone||{};
+    const 후보=RECUR.filter(r=>{
+      if(G.era<r.era[0] || G.era>r.era[1]) return false;
+      const 지난=G.minorDone[r.id];
+      if(지난!=null && G.year-지난 < 55) return false;
+      if(r.when){ try{ if(!r.when()) return false; }catch(e){ return false; } }
+      return true;
+    });
+    if(후보.length && Math.random()<0.20){
+      const r=pick(후보);
+      G.minorDone[r.id]=G.year;
+      G.pendingEvent={ y:G.year, t:r.t, b:r.b, c:r.c };
+    }
+    else if(Math.random()<0.16) minorEvent(B);
   }
-  else if(Math.random()<0.14) minorEvent(B);
 
   G.report=B;                                          // 연말 결산을 띄운다
   checkEnd();
@@ -1265,6 +1405,10 @@ function applyEffects(fx){
   if(fx.army){ const m=1+fx.army/100;
     natProvs('kor').forEach(p=>p.army=Math.round(p.army*m)); }
   if(fx.legitimacy) G.legit=clamp((G.legit||50)+fx.legitimacy,0,100);
+  if(fx.res)    G.res.pt=Math.max(0, +(G.res.pt+fx.res).toFixed(2));
+  if(fx.unrest) natProvs('kor').forEach(p=>p.unrest=clamp(p.unrest+fx.unrest,0,100));
+  if(fx.relC && dipOf('chn')) dipOf('chn').rel=clamp(dipOf('chn').rel+fx.relC,-100,100);
+  if(fx.relJ && dipOf('jpn')) dipOf('jpn').rel=clamp(dipOf('jpn').rel+fx.relJ,-100,100);
 }
 
 /* ================================================================
@@ -1367,6 +1511,7 @@ function aiTurn(B){
     if(d && d.war) 기세 += 0.30;
     // 빼앗긴 제 땅이 많을수록 더 자주 군사를 낸다
     기세 += clamp(natProvs('kor').filter(p=>p.home===k).length*0.05, 0, 0.35);
+    기세 *= diffOf().ai;
     // 전쟁 중에는 한 해에 여러 번 밀어붙인다. 이쪽만 여러 번 치던 것이 어긋남이었다.
     const 횟수 = (d&&d.war)? 3 : 1;
     for(let 시도=0; 시도<횟수; 시도++)
@@ -1391,7 +1536,7 @@ function aiTurn(B){
           const s2=(이길낌새 + (q.unrest/200) + 미움)*눈치;
           // 이길 낌새가 어지간해야 군사를 낸다. 그래도 주사위는 던진다 —
           // 반반인 싸움에 뛰어드는 것은 슬기로운 조정이 아니라 무모한 조정이다.
-          if(이길낌새>0.66 && s2>bs){ bs=s2; best=[p,q]; }
+          if(이길낌새>diffOf().thr && s2>bs){ bs=s2; best=[p,q]; }
         });
       });
       if(best){
@@ -1782,6 +1927,131 @@ function unlockTech(t){
   G.nations.kor.tech = +(G.nations.kor.tech + 4 + G.era*1.5).toFixed(1);
   log('「'+t.nm+'」을(를) 이루었다.'); snd('tech');
 }
+
+/* ================================================================
+   길잡이 — 이번 해에 할 일
+   ----------------------------------------------------------------
+   판에는 손이 스물 남짓 있고 눈금은 그보다 많다. 처음 잡은 사람은
+   1392년에 무엇부터 눌러야 하는지 알 길이 없어, Space만 누르다 망한다.
+
+   여기서는 지금 판을 읽어 "무엇을, 왜" 를 짚어 준다. 대신 해 주지는 않는다 —
+   고르는 것이 이 놀이인데 길잡이가 골라 버리면 놀이가 없어진다.
+   ================================================================ */
+function advice(){
+  const out=[], N=G.nations.kor, 우리=natProvs('kor');
+  const 더 = (급함, 말, 까닭, 손) => out.push({급함, 말, 까닭, 손});
+
+  /* 수령 — 가장 먼저, 가장 값싸게 듣는 약 */
+  const 빈=우리.filter(p=>!officialAt(p.id));
+  if(빈.length) 더(빈.length>=3? 92:64,
+    '수령 없는 고을이 '+빈.length+'곳',
+    '수령이 없으면 어지러움이 절로 오르고 세도 덜 걷힌다. 신하 탭에서 한 번에 채운다.',
+    ()=>{ G.tab='신하'; G.sel=빈[0].id; });
+
+  /* 곧 무너질 고을 */
+  const 시끄=우리.filter(p=>p.unrest>=60).sort((a,b)=>b.unrest-a.unrest);
+  if(시끄.length) 더(시끄[0].unrest>=80? 98:70,
+    시끄[0].nm+'의 어지러움 '+Math.round(시끄[0].unrest),
+    '오래 두면 조정을 등진다. 진휼로 눌러 두거나 수령을 좋은 사람으로 바꾼다.',
+    ()=>{ G.sel=시끄[0].id; });
+
+  /* 위태로운 국경 — 다만 '셀 수 있다'와 '칠 것 같다'는 다르다.
+     명은 늘 우리보다 세다. 그것만으로 겁을 주면 길잡이가 늑대를 부르는 꼴이 된다.
+     사이가 좋고 조약이 있으면 센 이웃도 당장의 위험은 아니다.
+     여러 곳이 걸려도 한 줄로 묶는다 — 같은 말을 네 번 하면 아무 말도 아니다. */
+  const 위태목록=[];
+  우리.forEach(P=>{
+    let 원군=0, 위협=0, 처=null;
+    [...P.adj].forEach(id=>{ const q=G.provs[id]; if(!q) return;
+      if(q.nat==='kor') 원군+=q.army*0.30;
+      else { const w=warPower(q,P); if(w.atk>위협){ 위협=w.atk; 처=q; } } });
+    if(!처) return;
+    const 수비=(P.army+원군)*TERR[P.t].def*(1+P.fort*0.16)*unitOf(P).def
+               *mods().defKor*(1+techOf('kor')/220);
+    const p=winChance(위협, 수비);
+    if(p<=0.55) return;
+    const d=DIP_NATS.includes(처.nat)? dipOf(처.nat) : null;
+    const 낌새 = !d? 0.7
+               : d.war? 1
+               : (d.ally || d.truce>0)? 0
+               : clamp(0.45 - d.rel/140, 0, 1);
+    if(낌새<0.35) return;
+    위태목록.push({P, 처, p, 낌새, d});
+  });
+  if(위태목록.length){
+    위태목록.sort((a,b)=>(b.p*b.낌새)-(a.p*a.낌새));
+    const w0=위태목록[0], 여럿=위태목록.length>1;
+    더(Math.round(58 + w0.p*22 + w0.낌새*20),
+      여럿? ('국경 '+위태목록.length+'곳이 위태롭다') : (w0.P.nm+이가(w0.P.nm)+' 위태롭다'),
+      (여럿? '가장 급한 곳은 '+w0.P.nm+'. ' : '')
+      + w0.처.nm+이가(w0.처.nm)+' 치면 '+Math.round(w0.p*100)+'%로 진다.'
+      + (w0.d && !w0.d.war && w0.d.rel<40
+          ? '  '+natName(w0.처.nat)+과와(natName(w0.처.nat))+'의 사이를 올려 두면 먼저 물지 않는다 — 사신이 성보다 싸다.'
+          : '  모병으로 군사를 두거나 성을 쌓는다.'),
+      ()=>{ G.sel=w0.P.id; });
+  }
+
+  /* 곳간 */
+  if(N.food < N.army/1000*4 + N.pop/9500) 더(88,
+    '곡식이 한 해를 못 넘긴다',
+    '먹을 것이 모자라면 굶고, 군대가 흩어지고, 온 고을이 시끄러워진다. 개간하거나 군사를 줄인다.',
+    null);
+  if(N.gold < 200 && G.era<3) 더(60,
+    '국고가 얕다', '녹봉이 밀리면 신하의 충성이 떨어진다. 장을 열어 세입을 늘린다.', null);
+
+  /* 남은 정무 — 쓰지 않으면 사라진다 */
+  if((N.adm||0) >= 2) 더(48,
+    '올해 정무가 '+N.adm+' 남았다',
+    '정무는 해를 넘기면 사라진다. 개간·장시·축성 가운데 하나라도 쓰는 편이 낫다.', null);
+
+  /* 연구 */
+  const 열수있는=TECHS.filter(t=>!techDone(t.id) && techOpen(t) && G.res.pt>=t.cost);
+  if(열수있는.length) 더(74,
+    '기술 마디 '+열수있는.length+'개를 열 수 있다',
+    '연구가 쌓여 있다. 「'+열수있는[0].nm+'」부터 열 수 있다.',
+    ()=>{ G.tab='기술'; });
+
+  /* 외교 */
+  DIP_NATS.forEach(k=>{ const d=dipOf(k); if(!d) return;
+    if(d.war) 더(80, natName(k)+'과 전쟁 '+d.warYears+'해째',
+      '싸움이 길수록 민심이 깎이고 군 유지비가 오른다. 외교 탭에서 화친을 청할 수 있다.',
+      ()=>{ G.tab='외교'; });
+    else if(!d.trade && d.rel>=25) 더(58, natName(k)+'과 통상을 열 수 있다',
+      '특산이 팔린다. 해마다 약 '+num(exportGuess(1))+'전.', ()=>{ G.tab='외교'; });
+    else if(d.rel<-30) 더(62, natName(k)+'과의 사이가 '+Math.round(d.rel),
+      '사이가 나쁘면 먼저 물린다. 사신을 보내 두는 편이 싸게 먹힌다.', ()=>{ G.tab='외교'; });
+  });
+
+  /* 붕당 */
+  const fs=Object.keys(G.factions), 고름=100/Math.max(1,fs.length);
+  const 센당=fs.find(f=>G.factions[f]>고름+22);
+  if(센당) 더(66, 센당+'이 조정을 쥐었다',
+    '한 당이 자리를 너무 많이 쥐면 사화가 난다. 다른 당의 신하를 수령으로 보내면 몫이 돌아온다.',
+    ()=>{ G.tab='신하'; });
+
+  /* 점령지 */
+  const 넘침=overExtend();
+  if(넘침) 더(84, '점령지가 '+넘침+'곳 넘친다',
+    '지고 갈 수 있는 것보다 많이 쥐면 해마다 민심과 정통이 깎인다. 수령을 두어 편입을 서두르거나 놓아준다.', null);
+
+  /* 정책 자리 */
+  if(G.policies.length<3){
+    const 열린=POLICIES.filter(P=>G.era>=P.era && !G.policies.includes(P.id)
+      && !conflictOf(P.id).length && N.gold>=P.cost*1.5);
+    if(열린.length) 더(52, '정책 자리가 '+(3-G.policies.length)+' 비었다',
+      '「'+열린[0].nm+'」'+을를(열린[0].nm)+' 펼 수 있다. 얻는 것과 잃는 것을 견주어 고른다.',
+      ()=>{ G.tab='정책'; });
+  }
+
+  /* 등용 대기 */
+  if(G.pool.length && G.officials.length < 우리.length+2 && N.gold>=40)
+    더(50, '등용을 기다리는 사람이 '+G.pool.length+'명',
+      '고을 수보다 신하가 적으면 빈 고을이 생긴다.', ()=>{ G.tab='신하'; });
+
+  out.sort((a,b)=>b.급함-a.급함);
+  return out;
+}
+function adviceCol(급함){ return 급함>=88? '#c4534a' : 급함>=70? '#e0bd76' : 'rgba(150,145,135,.9)'; }
 
 /* ================================================================
    소리
@@ -2937,6 +3207,30 @@ function sideState(g,x,y,w){
   g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
   g.fillText(ERAS[G.era].desc, x, y+30);
   let yy=y+52;
+
+  /* ── 이번 해에 할 일 ── */
+  const 조언=advice();
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('이번 해에 할 일', x, yy);
+  g.fillStyle='rgba(150,145,135,.6)'; g.font='9px serif'; g.textAlign='right';
+  g.fillText(조언.length? '누르면 그리로 간다' : '', x+w, yy); g.textAlign='left';
+  yy+=8;
+  if(!조언.length){
+    yy+=16; g.fillStyle='rgba(143,168,106,.9)'; g.font='11px serif';
+    g.fillText('급한 일이 없다. 한 해를 보내도 좋다.', x, yy); yy+=10;
+  }
+  조언.slice(0,5).forEach(a2=>{
+    const rowH=30, hov=inRect(Mouse,{x:x-4,y:yy,w:w+8,h:rowH});
+    if(hov&&a2.손){ g.fillStyle='rgba(190,150,80,.14)'; g.fillRect(x-4,yy,w+8,rowH); }
+    g.fillStyle=adviceCol(a2.급함); g.fillRect(x-4,yy+3,2,rowH-8);
+    g.font='12px serif'; g.fillText(a2.말, x+4, yy+14);
+    g.fillStyle='rgba(140,135,125,.75)'; g.font='9px serif';
+    const 짧=a2.까닭.length>34? a2.까닭.slice(0,33)+'…' : a2.까닭;
+    g.fillText(짧, x+4, yy+26);
+    if(hov) G.tip=a2.까닭;
+    if(a2.손) hz(x-4,yy,w+8,rowH, a2.손);
+    yy+=rowH;
+  });
+  yy+=14; divider(g,x,yy-8,w); yy+=10;
   const 점령=occupied('kor').length, 한도=holdAllowance();
   const rows=[
     ['고을', natProvs('kor').length+' 곳'
@@ -3285,8 +3579,23 @@ function drawBottom(g){
   panel(g,x,y,w,h,null,{head:false});
   const P=G.sel? G.provs[G.sel]:null;
   if(!P){
-    g.fillStyle='#5f5a53'; g.font='13px serif';
-    g.fillText('지도에서 고을을 고르시오.', x+16, y+28);
+    /* 빈 판을 놀리지 않는다 — 가장 급한 일을 여기에 적는다 */
+    const 조언=advice();
+    g.fillStyle='#5f5a53'; g.font='12px serif';
+    g.fillText('지도에서 고을을 고르시오.', x+16, y+24);
+    if(조언.length){
+      const a3=조언[0];
+      g.fillStyle=adviceCol(a3.급함); g.fillRect(x+16, y+38, 3, 30);
+      g.font='15px serif'; g.fillText(a3.말, x+26, y+52);
+      g.fillStyle='rgba(150,145,135,.85)'; g.font='11px serif';
+      g.fillText(a3.까닭, x+26, y+68);
+      if(a3.손){
+        btn(g, x+16, y+78, 150, 24, '그리로 간다', false, a3.손);
+      }
+    } else {
+      g.fillStyle='rgba(143,168,106,.9)'; g.font='14px serif';
+      g.fillText('급한 일이 없다. 한 해를 보내도 좋다.', x+16, y+54);
+    }
   } else {
     const T=TERR[P.t], NA=NATIONS[P.nat];
     g.fillStyle=NA.col; g.fillRect(x+12,y+12,4,34);
@@ -3549,10 +3858,14 @@ function drawChoice(g){
     // 효과 미리보기 — 국고·곡식·군사는 몫(%)이고 민심·기술·정통은 눈금이다.
     // 예전에는 둘을 똑같이 적어 두어 '국고 -4'가 4전인지 4%인지 알 수 없었다.
     g.font='10px serif'; let ex=x+44;
-    const 이름={gold:'국고',food:'곡식',stab:'민심',tech:'기술',army:'군사',legitimacy:'정통'};
+    const 이름={gold:'국고',food:'곡식',stab:'민심',tech:'기술',army:'군사',legitimacy:'정통',
+                res:'연구',unrest:'어지러움',relC:'명과의 사이',relJ:'일본과의 사이'};
     const 몫={gold:1,food:1,army:1};
+    // 어지러움은 오르는 것이 나쁘다 — 빛깔을 뒤집는다
+    const 거꾸로={unrest:1};
     Object.entries(c.e||{}).forEach(([k,v])=>{
-      g.fillStyle= v>0? 'rgba(143,168,106,.95)':'rgba(196,83,74,.95)';
+      const 좋음 = 거꾸로[k]? v<0 : v>0;
+      g.fillStyle= 좋음? 'rgba(143,168,106,.95)':'rgba(196,83,74,.95)';
       const s=(이름[k]||k)+' '+(v>0?'+':'')+v+(몫[k]?'%':'');
       g.fillText(s, ex, by+44); ex+=g.measureText(s).width+14;
     });
@@ -3644,7 +3957,7 @@ const SLOTS=['auto','1','2','3'];
 function slotKey(s){ return CFG.SAVE+'_'+s; }
 function packSave(){
   const d={ ver:VERSION, at:G.year, year:G.year, era:G.era, turn:G.turn,
-    mapMode:G.mapMode, mapFocus:G.mapFocus, mapZoom:G.mapZoom, mapPan:G.mapPan,
+    mapMode:G.mapMode, mapFocus:G.mapFocus, mapZoom:G.mapZoom, mapPan:G.mapPan, diff:G.diff,
     provs:{}, nations:G.nations, officials:G.officials, pool:G.pool,
     factions:G.factions, policies:G.policies, polSince:G.polSince,
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
@@ -3691,6 +4004,8 @@ function loadGame(slot){
     if(d.usedPeople) G.usedPeople=d.usedPeople;
     /* 사건·연구·외교 — 예전에는 이것들이 저장되지 않아 불러오면 처음으로 돌아갔다 */
     G.evDone=d.evDone||{}; G.evQueue=d.evQueue||[]; G.pendingEvent=d.pendingEvent||null;
+    if(d.diff!=null) G.diff=clamp(d.diff,0,DIFFS.length-1);
+    if(d.minorDone) G.minorDone=d.minorDone;
     if(d.res) G.res={ pt:d.res.pt||0, done:d.res.done||{}, gain:d.res.gain||0 };
     if(d.dip) DIP_NATS.forEach(k=>{ if(d.dip[k]) Object.assign(G.dip[k], d.dip[k]); });
     G.byeol=d.byeol||0;
@@ -3761,7 +4076,18 @@ function drawTitle(g){
   g.textAlign='left';
 
   const 이어=slotInfo('auto');
-  let y=320; const bw=260, bx=(CFG.W-bw)/2;
+  let y=300; const bw=260, bx=(CFG.W-bw)/2;
+  /* 난이도 — 새로 시작하기 전에 고른다 */
+  g.textAlign='center'; g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif';
+  g.fillText('난이도', CFG.W/2, y-14); g.textAlign='left';
+  const dw=Math.floor(bw/3);
+  DIFFS.forEach((D,i)=>{
+    btn(g, bx+i*dw, y, dw-3, 26, D.nm, START_DIFF===i, ()=>{ START_DIFF=i; });
+  });
+  if(inRect(Mouse,{x:bx,y:y,w:bw,h:26})) G.tip=DIFFS[START_DIFF].note;
+  g.textAlign='center'; g.fillStyle='rgba(130,125,115,.7)'; g.font='10px serif';
+  g.fillText(DIFFS[START_DIFF].note, CFG.W/2, y+42); g.textAlign='left';
+  y+=58;
   if(이어 && !이어.bad){
     btn(g,bx,y,bw,44,'이어하기  ·  '+이어.y+'년',false,()=>{
       if(loadGame('auto')){ SCENE='play'; MENU=null; } else log('이어할 수 없다.');

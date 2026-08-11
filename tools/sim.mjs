@@ -11,6 +11,7 @@
      node tools/sim.mjs --plan good     — 한 가지 두는 법만
      node tools/sim.mjs --seed 7        — 씨앗을 고정한다
      node tools/sim.mjs --trace         — 해마다 한 줄씩 찍는다
+     node tools/sim.mjs --diff 0        — 난이도 (0 순한맛 · 1 보통 · 2 매운맛)
    ================================================================ */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,7 @@ const PLAN  = arg('plan', null);
 const SEED  = arg('seed', null);
 const TRACE = !!arg('trace', false);
 const QUIET = !!arg('quiet', false);
+const DIFF  = arg('diff', null);      // 0 순한맛 / 1 보통 / 2 매운맛
 
 /* ---------------------------------------------------------------- 난수 */
 /* Math.random을 갈아 끼워 같은 씨앗이면 같은 판이 나오게 한다 */
@@ -162,6 +164,7 @@ function boot(seed){
   const get  = n => sandbox.__GET(n);
   const call = (n, ...a) => sandbox.__CALL(n, a);
   const ev   = s => sandbox.__EVAL(s);
+  if(DIFF != null) ev('START_DIFF=' + (+DIFF));    // 난이도를 고른 뒤에 판을 연다
   return { sandbox, get, call, ev, rng };
 }
 
@@ -656,7 +659,7 @@ for(const k of keys){
   }
 }
 
-console.log('\n── 요약 ──');
+console.log('\n── 요약 ──' + (DIFF!=null? '  (난이도 '+['순한맛','보통','매운맛'][+DIFF]+')' : ''));
 console.log('두는 법        평균 끝난 해   평균 점수   평균 고을   최대 고을   30고을   완주');
 summary.forEach(s => {
   console.log(`${s.nm.padEnd(12)} ${String(s.year).padStart(8)} ${String(s.total).padStart(11)} ` +
