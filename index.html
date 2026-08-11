@@ -23,12 +23,9 @@
   #province-select:focus-visible{outline:3px solid rgba(231,224,240,.8);outline-offset:2px;}
   .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;
     overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
-  @media (max-width:900px),(max-height:620px),(pointer:coarse){
-    #province-tool:not([hidden]){display:flex;}
-  }
-  @media (orientation:landscape) and (max-height:620px){
-    #province-tool{left:12px;top:max(10px,env(safe-area-inset-top));bottom:auto;transform:none;width:min(360px,calc(100vw - 24px));}
-  }
+  /* 판 밖으로 남는 자리가 있을 때만 띄운다. 자리가 없는데 띄우면
+     화면 위 표시줄을 덮는다 — 눕힌 손전화가 그랬다. resize() 가 정한다. */
+  #province-tool[data-room="1"]:not([hidden]){display:flex;}
 </style>
 </head>
 <body>
@@ -48,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -69,6 +66,13 @@ const rnd=(a,b)=>a+Math.random()*(b-a);
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 function hash2(x,y){ let n=x*374761393+y*668265263; n=(n^(n>>13))*1274126177; return ((n^(n>>16))>>>0)/4294967295; }
 function num(n){ return Math.round(n).toLocaleString('ko-KR'); }
+/* 좁은 판에서 쓰는 짧은 수 — 6,110,386 을 611만 으로 */
+function numS(n){
+  n=Math.round(n);
+  if(Math.abs(n)>=100000000) return (n/100000000).toFixed(1)+'억';
+  if(Math.abs(n)>=10000) return Math.round(n/10000)+'만';
+  return n.toLocaleString('ko-KR');
+}
 /* 조사 — 받침이 있느냐로 갈린다.
    '함경북도이(가)' 처럼 괄호를 치고 넘어가던 자리를 제대로 적는다. */
 function 받침(w){
@@ -91,7 +95,10 @@ addEventListener('keydown',e=>{
   if(!Key.down[e.code])Key.pressed[e.code]=true; Key.down[e.code]=true;
   if(['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
 addEventListener('keyup',e=>{ Key.down[e.code]=false; });
-const Mouse={x:0,y:0,click:false,rclick:false,wheel:0,touch:false};
+/* wheelX·wheelY — 굴림을 어느 자리에 먹일지.
+   손가락으로 판을 굴리면 손끝이 판 밖으로 나가 버린다. 그때도 굴림은
+   처음 짚은 판이 받아야 한다. 없으면 지금 손이 있는 자리로 본다. */
+const Mouse={x:0,y:0,click:false,rclick:false,wheel:0,wheelX:null,wheelY:null,touch:false};
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
 const provinceTool=document.getElementById('province-tool');
 const provinceSelect=document.getElementById('province-select');
@@ -159,7 +166,7 @@ cv.addEventListener('touchstart',e=>{
   if(!e.touches[0])return;
   const t=e.touches[0], p=toCanvas(t);
   Mouse.x=p.x; Mouse.y=p.y; Mouse.touch=true;
-  TCH={x:p.x,y:p.y,startX:t.clientX,startY:t.clientY,moved:false,onMap:overMap(p.x,p.y)};
+  TCH={x:p.x,y:p.y,x0:p.x,y0:p.y,startX:t.clientX,startY:t.clientY,moved:false,onMap:overMap(p.x,p.y)};
   beginPan(p.x,p.y);
   e.preventDefault(); },{passive:false});
 cv.addEventListener('touchmove',e=>{
@@ -176,15 +183,77 @@ cv.addEventListener('touchmove',e=>{
   const t=e.touches[0], p=toCanvas(t);
   if(Math.hypot(t.clientX-TCH.startX,t.clientY-TCH.startY)>10) TCH.moved=true;
   if(TCH.onMap && PAN){ if(TCH.moved) dragPan(p.x,p.y); }
-  else Mouse.wheel += (TCH.y-p.y);
+  else { Mouse.wheel += (TCH.y-p.y); Mouse.wheelX=TCH.x0; Mouse.wheelY=TCH.y0; }
   TCH.x=p.x; TCH.y=p.y; Mouse.x=p.x; Mouse.y=p.y; e.preventDefault(); },{passive:false});
 cv.addEventListener('touchend',e=>{
   if(PINCH && e.touches.length<2) PINCH=null;
   if(TCH && !TCH.moved) Mouse.click=true;
   TCH=null; PAN=null; },{passive:false});
-function resize(){ const s=Math.min(innerWidth/CFG.W, innerHeight/CFG.H);
-  cv.style.width=(CFG.W*s)+'px'; cv.style.height=(CFG.H*s)+'px'; }
-addEventListener('resize',resize); resize();
+/* ================================================================
+   판 짜기 — 화면에 맞추어 자리를 다시 잡는다
+   ----------------------------------------------------------------
+   1280×720 한 벌로만 그리면 손전화에서는 0.3배로 줄어 글씨가 뭉개진다.
+   화면의 생김새를 보고 세 가지로 나눈다.
+     넓은 판 1280×720 — 여느 화면
+     좁은 판 1000×562 — 작은 창, 가로로 든 손전화
+     세로 판  470×980 — 세로로 든 손전화
+   지도는 이제 배율과 자리를 스스로 가지므로(v0.4.1) 창 크기를 바꿔도 된다.
+   지도판·경계·이름이 놓이는 좌표계는 그대로 두고 '보는 창'만 옮긴다.
+   ================================================================ */
+const MAP_O={ x:8, y:62 };              // 지도 좌표계의 원점 — 구워 둔 판이 여기 맞춰져 있다
+const VIEW={ x:8, y:62, w:888, h:480 }; // 그 판을 내다보는 창 (화면 위의 자리)
+const LAY={ phone:false, small:false, topH:62,
+            side:{x:906,y:62,w:366,h:650}, bottom:{x:8,y:568,w:888,h:144} };
+function layout(){
+  const vw=Math.max(320, innerWidth||1280), vh=Math.max(320, innerHeight||720);
+  const 세로 = vw/vh < 1.05;
+  if(세로){
+    CFG.W=470; CFG.H=980; LAY.phone=true; LAY.small=true; LAY.topH=78;
+    VIEW.x=6; VIEW.y=LAY.topH+8; VIEW.w=CFG.W-12; VIEW.h=280;
+    /* 아래 판에는 수치 두 줄 · 명령 두 줄 · 정무와 한 해 넘기기가 들어간다.
+       하나라도 모자라면 서로 겹친다 — 258 이 그 합이다. */
+    LAY.bottom={ x:6, y:VIEW.y+VIEW.h+24, w:CFG.W-12, h:258 };
+    const sy=LAY.bottom.y+LAY.bottom.h+8;
+    // 아래에 '고을 바로 선택' 상자가 뜬다 — 그 자리를 비워 둔다
+    LAY.side={ x:6, y:sy, w:CFG.W-12, h:CFG.H-sy-8-62 };
+  } else {
+    // 화면이 작으면 판을 통째로 줄인다 — 줄인 만큼 글씨가 화면에서 커진다
+    LAY.small = Math.min(vw/1280, vh/720) < 0.66;
+    CFG.W = LAY.small? 1000 : 1280;
+    CFG.H = LAY.small?  562 :  720;
+    LAY.phone=false; LAY.topH=62;
+    const sideW = LAY.small? 302 : 366;
+    // 좁은 판은 정무 구슬이 단추 아래로 내려오므로 한 줄만큼 더 준다
+    const botH  = LAY.small? 152 : 144;
+    VIEW.x=8; VIEW.y=LAY.topH;
+    VIEW.w=CFG.W-8-sideW-10-8;
+    VIEW.h=CFG.H-LAY.topH-26-botH-8;
+    LAY.bottom={ x:8, y:VIEW.y+VIEW.h+26, w:VIEW.w, h:botH };
+    LAY.side  ={ x:CFG.W-sideW-8, y:LAY.topH, w:sideW, h:CFG.H-LAY.topH-8 };
+  }
+  if(cv.width!==CFG.W || cv.height!==CFG.H){
+    cv.width=CFG.W; cv.height=CFG.H;
+    // 아래에서 let 으로 선언되는 것들이라 첫 판짜기 때는 아직 없다(TDZ).
+    // 그때는 어차피 구워 둔 것도 없으므로 그냥 넘어간다.
+    try{ MAPBASE=null; MAPCLOUDS=null; }catch(e){}
+  }
+  // G 는 아래에서 let 으로 선언되므로 첫 판짜기 때는 아직 없다.
+  // typeof 로도 막히지 않는 자리(TDZ)라 감싸 둔다.
+  try{ if(G && G.mapPan) clampPan(); }catch(e){}
+}
+function resize(){
+  layout();
+  const s=Math.min(innerWidth/CFG.W, innerHeight/CFG.H);
+  const cw=CFG.W*s, ch=CFG.H*s;
+  cv.style.width=cw+'px'; cv.style.height=ch+'px';
+  /* 세로 판은 아래 62 를 비워 두었으니 그 위에 얹으면 되고,
+     그 밖에는 판 아래로 남는 자리가 넉넉할 때만 띄운다. */
+  const 여백=(innerHeight-ch)/2;
+  provinceTool.dataset.room = (LAY.phone || 여백>=58) ? '1' : '0';
+}
+addEventListener('resize',resize);
+addEventListener('orientationchange',()=>setTimeout(resize,120));
+resize();
 provinceSelect.addEventListener('change',()=>{
   if(!G||!provinceSelect.value) return;
   G.sel=provinceSelect.value; G.mapFocus='korea';
@@ -244,6 +313,9 @@ function frame9(g,x,y,w,h){
   return true;
 }
 /* 창 바탕 — 큰 테두리 그림이 있으면 그것으로, 없으면 판을 그린다 */
+/* 창 너비 — 세로 판(470)에서는 600·680짜리 창이 화면 밖으로 삐져나간다.
+   담을 것은 x 와 w 를 놓고 재므로, 너비만 화면에 맞춰 주면 안이 따라 접힌다. */
+function 창폭(원한다){ return Math.min(원한다, CFG.W-20); }
 function bigPanel(g,x,y,w,h){
   g.fillStyle='rgba(14,16,20,.97)'; g.fillRect(x,y,w,h);
   if(!frame9(g,x,y,w,h)){
@@ -1432,6 +1504,13 @@ function relBase(k){
   // 조선이 커질수록 이웃은 경계한다. 남의 땅을 쥐고 있으면 더욱.
   b -= clamp((natProvs('kor').length-16)*1.6, 0, 40);
   b -= occupied('kor').filter(p=>p.home===k).length*9;   // 제 땅을 쥐고 있으면 원수다
+  /* 동맹은 종이가 아니라 버팀목이다.
+     예전에는 동맹을 맺어도 기준이 18이라 72에서 시작한 사이가 열 해 만에
+     35 아래로 떨어져 반드시 깨졌다. 300전을 치르고 산 것이 산술적으로
+     만료되게 되어 있었다. 이제 동맹이 서 있는 동안은 우호 아래로 내려가지
+     않는다 — 깨지려면 무슨 일이 있어야 한다(그 나라를 치거나, 땅을 쥐거나,
+     국서로 꾸짖거나). */
+  if(d.ally) b=Math.max(b, 46);
   return clamp(b, -100, 100);
 }
 function dipTurn(B){
@@ -1451,14 +1530,22 @@ function dipTurn(B){
       const 지침 = 0.06 + d.warYears*0.03;
       if(d.warYears>=3 && Math.random()<지침){
         d.war=false; d.warYears=0; d.truce=8; d.rel=clamp(d.rel+18,-100,100);
-        log(natName(k)+'이(가) 싸움을 거두고 사신을 보내왔다.');
+        log(natName(k)+이가(natName(k))+' 싸움을 거두고 사신을 보내왔다.');
         B.events.push(natName(k)+'과 휴전');
       }
     }
     /* 종이는 마음을 붙들지 못한다 */
     if(d.trade && (d.rel<0 || d.war)){ d.trade=false;
       log(natName(k)+'과의 통상이 끊겼다.'); B.events.push(natName(k)+' 통상 파기'); }
-    if(d.ally && (d.rel<35 || d.war)){ d.ally=false;
+    if(d.ally && d.rel<44 && d.rel>=35 && !d.war && !d.allyWarn){
+      d.allyWarn=1;
+      log(natName(k)+'과의 동맹이 흔들린다. 사이가 더 떨어지면 깨진다.');
+      B.events.push(natName(k)+' 동맹 흔들림');
+    }
+    if(d.rel>=50) d.allyWarn=0;
+    if(d.ally && (d.rel<35 || d.war)){ d.ally=false; d.allyWarn=0;
+      // 깨져도 곧바로 물지는 않는다 — 손 쓸 틈은 준다
+      d.truce=Math.max(d.truce, 3);
       log(natName(k)+'과의 동맹이 깨졌다.'); B.events.push(natName(k)+' 동맹 파기'); }
     if(d.tribute && d.war){ d.tribute=false; }
     B.dip.push({k, rel:Math.round(d.rel), war:d.war});
@@ -1466,9 +1553,10 @@ function dipTurn(B){
   /* 이웃이 먼저 청해 오는 일 — 사이가 아주 좋으면 동맹을 제안한다 */
   DIP_NATS.forEach(k=>{
     const d=dipOf(k);
-    if(d && !d.ally && !d.war && d.rel>=72 && Math.random()<0.10){
+    if(d && !d.ally && !d.war && d.rel>=72 && Math.random()<0.10
+       && !DIP_NATS.some(o=>o!==k && dipOf(o) && dipOf(o).ally)){
       d.ally=true; d.rel=clamp(d.rel+6,-100,100);
-      log(natName(k)+'이(가) 먼저 손을 내밀어 동맹이 맺어졌다.');
+      log(natName(k)+이가(natName(k))+' 먼저 손을 내밀어 동맹이 맺어졌다.');
       B.events.push(natName(k)+'과 동맹');
     }
   });
@@ -1483,7 +1571,7 @@ function declareWar(k, 우리가){
     G.legit=clamp(G.legit-4,0,100);
     log(natName(k)+'과(와) 전쟁이 열렸다.');
   } else {
-    log(natName(k)+'이(가) 군사를 일으켰다.');
+    log(natName(k)+이가(natName(k))+' 군사를 일으켰다.');
   }
 }
 
@@ -1546,7 +1634,7 @@ function aiTurn(B){
         const r=resolveBattle(from, q);
         if(r.won){
           q.nat=k;
-          log(natName(k)+'이(가) '+q.nm+'을(를) 차지했다.');
+          log(natName(k)+이가(natName(k))+' '+q.nm+을를(q.nm)+' 차지했다.');
           if(옛임자==='kor'){
             G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
             G.legit=clamp(G.legit-5,0,100);
@@ -1558,7 +1646,7 @@ function aiTurn(B){
             if(벗) allyStrike(벗, k, B);
           }
         } else {
-          log(natName(k)+'이(가) '+q.nm+'을(를) 쳤으나 물러났다.');
+          log(natName(k)+이가(natName(k))+' '+q.nm+을를(q.nm)+' 쳤으나 물러났다.');
           if(옛임자==='kor' && B) B.events.push(q.nm+' 방어');
         }
       }
@@ -1679,6 +1767,7 @@ const ACTIONS=[
       return o.from.nm+'의 '+o.U.nm+'로 친다.  이길 낌새 '+Math.round(o.p*100)+'%'
         + '  ('+num(Math.round(o.atk))+' 대 '+num(Math.round(o.def))+')'
         + (o.원군>1? '  · 이웃 고을이 원군 '+num(Math.round(o.원군))+'을 보낸다' : '')
+        + (o.원병>1? '  · '+natName(o.벗)+'이(가) 원병 '+num(Math.round(o.원병))+'을 보낸다' : '')
         + (o.육로? '' : '  · 바닷길')
         + (d && !d.war? '  ·  '+natName(p.nat)+'과(와) 전쟁이 열린다' : ''); },
     run:p=>{ invade(p); } }
@@ -1758,10 +1847,23 @@ function warPower(from, target){
 
   const atk=(from.army+응원)*mil*(1+tagVal(from,'atk',0))*배*U.atk
             *(우리공격? M.atk : 1)*(1+techOf(from.nat)/220);
+  /* 동맹의 원병.
+     명과 일본은 서로 맞댄 고을이 하나도 없어, '우리를 친 쪽을 문다'는 약조가
+     구조적으로 이뤄질 수 없었다. 대신 지킬 때 군사를 보내게 한다 —
+     임진년에 실제로 그러했듯이. */
+  let 원병=0, 벗=null;
+  if(우리수비){
+    벗=DIP_NATS.find(o=>o!==from.nat && dipOf(o) && dipOf(o).ally && !dipOf(o).war);
+    if(벗){
+      // 구원병이지 주둔군이 아니다 — 전선의 규모에 맞추어 온다
+      const 보낼수있는 = G.nations[벗].army * (0.02 + clamp(dipOf(벗).rel,0,100)/100*0.03);
+      원병 = Math.min(보낼수있는, target.army*3 + 3000);
+    }
+  }
   const T=TERR[target.t];
-  const def=(target.army+원군)*T.def*(1+target.fort*0.16)*V.def
+  const def=(target.army+원군+원병)*T.def*(1+target.fort*0.16)*V.def
             *(우리수비? M.defKor : 1)*(1+techOf(target.nat)/220);
-  return { atk, def, 육로, U, V, 원군, 응원 };
+  return { atk, def, 육로, U, V, 원군, 응원, 원병, 벗 };
 }
 
 /* 이길 낌새.
@@ -1877,15 +1979,23 @@ function dipActs(k){
         log(d.trade? nm()+'과 통상을 열었다.' : nm()+'과의 통상을 닫았다.'); } },
     { id:'ally', nm:d&&d.ally?'동맹을 거둔다':'동맹', adm:2,
       cost:d&&d.ally? 0 : Math.round(300*물가),
-      can:()=>!!d && !d.war && (d.ally || d.rel>=60),
-      desc:()=>d.ally
+      /* 명과 일본은 서로를 겨눈다. 둘 다와 형제가 될 수는 없다 —
+         그럴 수 있으면 아무도 우리를 못 치게 되어 놀이가 끝난다. */
+      can:()=>!!d && !d.war && (d.ally || (d.rel>=60 && !DIP_NATS.some(o=>o!==k && dipOf(o) && dipOf(o).ally))),
+      desc:()=>{
+        const 딴벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
+        return d.ally
         ? '동맹을 거둔다.  사이 −20.'
+        : 딴벗? ('이미 '+natName(딴벗)+과와(natName(딴벗))+' 동맹을 맺었다. 둘 다와 형제가 될 수는 없다.')
         : '사이 60 이상이라야 한다 (지금 '+Math.round(d.rel)+').'
-          + '  우리를 치지 않고, 우리를 친 쪽을 문다.',
+          + '  우리가 지킬 때 군사를 보내고, 우리를 친 쪽을 문다.'
+          + '  다른 이웃과의 사이는 크게 떨어진다.'; },
       run:()=>{ if(d.ally){ d.ally=false; d.rel=clamp(d.rel-20,-100,100);
-          log(natName(k)+'과의 동맹을 거두었다.'); }
+          log(natName(k)+과와(natName(k))+'의 동맹을 거두었다.'); }
         else { d.ally=true; d.rel=clamp(d.rel+10,-100,100);
-          log(natName(k)+'과 동맹을 맺었다.'); } } },
+          // 한쪽과 손을 잡으면 다른 쪽이 등을 돌린다
+          const o=DIP_NATS.find(x=>x!==k); if(o&&dipOf(o)) dipOf(o).rel=clamp(dipOf(o).rel-22,-100,100);
+          log(natName(k)+과와(natName(k))+' 동맹을 맺었다.'); } } },
     { id:'peace', nm:'화친', adm:2, cost:Math.round(260*물가),
       can:()=>!!d && d.war,
       desc:()=>'싸움을 끝낸다.  국고를 치르고 정통 −5.  여덟 해 동안 다시 치지 않는다.',
@@ -2591,56 +2701,70 @@ function draw(){
 }
 
 function drawTop(g){
-  const N=G.nations.kor;
-  g.fillStyle='rgba(16,18,24,.96)'; g.fillRect(0,0,CFG.W,54);
-  g.strokeStyle='rgba(190,158,96,.35)'; g.beginPath(); g.moveTo(0,54.5); g.lineTo(CFG.W,54.5); g.stroke();
-  g.textAlign='left'; g.fillStyle='#e0bd76'; g.font='22px serif';
-  g.fillText(G.year+'년', 16, 30);
-  g.fillStyle='#c9bfa8'; g.font='14px serif';
-  g.fillText(ERAS[G.era].nm, 96, 30);
-  // 전쟁 중이면 연호 아래에 붉게 적는다 — 잊고 지나갈 수 있는 일이 아니다
+  const N=G.nations.kor, H=LAY.topH;
+  g.fillStyle='rgba(16,18,24,.96)'; g.fillRect(0,0,CFG.W,H);
+  g.strokeStyle='rgba(190,158,96,.35)'; g.beginPath(); g.moveTo(0,H+.5); g.lineTo(CFG.W,H+.5); g.stroke();
+
   const 싸움=DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).war);
+  const 좁 = LAY.phone;
+  g.textAlign='left'; g.fillStyle='#e0bd76'; g.font=(좁?'19px':'22px')+' serif';
+  g.fillText(G.year+'년', 16, 좁?26:30);
+  g.fillStyle='#c9bfa8'; g.font=(좁?'12px':'14px')+' serif';
+  g.fillText(ERAS[G.era].nm, 좁?84:96, 좁?26:30);
   if(싸움.length){
     g.fillStyle='#c4534a'; g.font='11px serif';
-    g.fillText('전쟁 · '+싸움.map(natName).join(' · '), 16, 47);
-    if(inRect(Mouse,{x:12,y:36,w:180,h:16}))
+    g.fillText('전쟁 · '+싸움.map(natName).join(' · '), 16, 좁?42:47);
+    if(inRect(Mouse,{x:12,y:좁?32:36,w:180,h:16}))
       G.tip='싸움이 길어지면 민심이 깎이고 군 유지비가 오른다. 외교 판에서 화친을 청할 수 있다.';
-  } else {
+  } else if(!좁){
     g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
     g.fillText('v'+VERSION, 16, 47);
   }
 
   const items=[
-    ['국고', num(N.gold), '#e0bd76'],
-    ['식량', num(N.food), '#8fbf6a'],
-    ['인구', num(N.pop), '#9fd0e8'],
-    ['군사', num(N.army), '#c4534a'],
-    ['기술', num(N.tech), '#b79fe0'],
-    ['고을', N.prov+'', '#cfc7b6']
+    ['국고', 좁?numS(N.gold):num(N.gold), '#e0bd76', 'gold'],
+    ['식량', 좁?numS(N.food):num(N.food), '#8fbf6a', 'food'],
+    ['인구', 좁?numS(N.pop):num(N.pop),   '#9fd0e8', 'pop'],
+    ['군사', 좁?numS(N.army):num(N.army), '#c4534a', 'army'],
+    ['기술', num(N.tech), '#b79fe0', 'tech'],
+    ['고을', N.prov+'',   '#cfc7b6', 'prov']
   ];
-  const keys=['gold','food','pop','army','tech','prov'];
-  let x=210;
-  items.forEach(([k,v,c],i)=>{
-    let tx=x;
-    if(blit(g,'icons',ICON_UV[keys[i]],x,18,32,32,18,18)) tx=x+22;
-    g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif'; g.fillText(k, tx, 22);
-    g.fillStyle=c; g.font='16px serif'; g.fillText(v, tx, 42);
-    x=tx+Math.max(96, g.measureText(v).width+40);
-  });
-  // 민심과 정통 — 둘 다 판정에 들어가므로 둘 다 늘 보여야 한다
-  const 눈금=(label,v,col,by)=>{
-    g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText(label, x, by+8);
-    bar(g, x+30, by, 72, 9, v/100, col);
-    g.fillStyle='#cfc7b6'; g.font='10px serif'; g.fillText(Math.round(v)+'', x+108, by+8);
+  const 눈금=(label,v,col,bx,by,bw)=>{
+    g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText(label, bx, by+8);
+    bar(g, bx+28, by, bw, 9, v/100, col);
+    g.fillStyle='#cfc7b6'; g.font='10px serif'; g.fillText(Math.round(v)+'', bx+32+bw, by+8);
   };
-  눈금('민심', N.stab, N.stab<35?'#c4534a':'#8fa86a', 14);
-  눈금('정통', G.legit, G.legit<35?'#c4534a':'#b79fe0', 32);
-  if(inRect(Mouse,{x:x,y:10,w:132,h:36}))
-    G.tip='민심은 고을을 잡아 두고, 정통은 조정을 잡아 둔다. '
-        + '정통이 낮으면 사화가 잦고 고을이 먼저 등을 돌린다.';
-  // 메뉴
-  btn(g, CFG.W-78, 14, 64, 26, '메뉴', false, ()=>{ MENU={tab:null}; });
-  if(inRect(Mouse,{x:CFG.W-78,y:14,w:64,h:26})) G.tip='저장 · 불러오기 · 새로 시작 · 나가기  (Esc)';
+
+  if(좁){
+    /* 세로 판 — 아랫줄에 여섯 눈금, 민심·정통은 오른쪽 위에 잘게 */
+    let x=14; const step=(CFG.W-28)/items.length;
+    items.forEach(([k,v,c])=>{
+      g.fillStyle='rgba(150,145,135,.7)'; g.font='9px serif'; g.textAlign='left';
+      g.fillText(k, x, 58);
+      g.fillStyle=c; g.font='13px serif'; g.fillText(v, x, 73);
+      x+=step;
+    });
+    눈금('민심', N.stab, N.stab<35?'#c4534a':'#8fa86a', CFG.W-206, 8, 44);
+    눈금('정통', G.legit, G.legit<35?'#c4534a':'#b79fe0', CFG.W-206, 24, 44);
+    btn(g, CFG.W-72, 10, 58, 26, '메뉴', false, ()=>{ MENU={tab:null}; });
+  } else {
+    const keys=['gold','food','pop','army','tech','prov'];
+    let x=LAY.small?176:210;
+    items.forEach(([k,v,c],i)=>{
+      let tx=x;
+      if(blit(g,'icons',ICON_UV[keys[i]],x,18,32,32,18,18)) tx=x+22;
+      g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif'; g.fillText(k, tx, 22);
+      g.fillStyle=c; g.font=(LAY.small?'14px':'16px')+' serif'; g.fillText(v, tx, 42);
+      x=tx+Math.max(LAY.small?76:96, g.measureText(v).width+(LAY.small?30:40));
+    });
+    눈금('민심', N.stab, N.stab<35?'#c4534a':'#8fa86a', x, 14, 72);
+    눈금('정통', G.legit, G.legit<35?'#c4534a':'#b79fe0', x, 32, 72);
+    if(inRect(Mouse,{x:x,y:10,w:132,h:36}))
+      G.tip='민심은 고을을 잡아 두고, 정통은 조정을 잡아 둔다. '
+          + '정통이 낮으면 사화가 잦고 고을이 먼저 등을 돌린다.';
+    btn(g, CFG.W-78, 14, 64, 26, '메뉴', false, ()=>{ MENU={tab:null}; });
+    if(inRect(Mouse,{x:CFG.W-78,y:14,w:64,h:26})) G.tip='저장 · 불러오기 · 새로 시작 · 나가기  (Esc)';
+  }
 }
 
 /* ================================================================
@@ -2856,8 +2980,9 @@ const MAP_ZOOM_MIN=1, MAP_ZOOM_MAX=8;
 /* 한반도가 창 높이에 꼭 차는 배율. 실제 좌표에서 재어 둔 값이다. */
 const KOR_BOX={x0:585,y0:154,x1:653,y1:282};
 const MAP_PRESETS={
-  all:  ()=>({ zoom:1, cx:MAP_GEO.width/2, cy:MAP_GEO.height/2 }),
-  korea:()=>({ zoom:Math.min(MAP_ZOOM_MAX, (MAP_GEO.height/(KOR_BOX.y1-KOR_BOX.y0))*0.92),
+  all:  ()=>({ zoom:Math.min(VIEW.w/MAP_GEO.width, VIEW.h/MAP_GEO.height),
+               cx:MAP_GEO.width/2, cy:MAP_GEO.height/2 }),
+  korea:()=>({ zoom:Math.min(MAP_ZOOM_MAX, (VIEW.h/(KOR_BOX.y1-KOR_BOX.y0))*0.92),
                cx:(KOR_BOX.x0+KOR_BOX.x1)/2, cy:(KOR_BOX.y0+KOR_BOX.y1)/2 })
 };
 function mapZoom(){ return (G&&G.mapZoom)||1; }
@@ -2865,14 +2990,14 @@ function activeMapView(){ return { zoom:mapZoom(), x:(G&&G.mapPan?G.mapPan.x:0),
 /* 창이 지도 밖으로 나가지 않게 잡아 둔다 */
 function clampPan(){
   if(!G||!G.mapPan) return;
-  const z=mapZoom(), vw=MAP_GEO.width/z, vh=MAP_GEO.height/z;
-  G.mapPan.x=clamp(G.mapPan.x, 0, Math.max(0, MAP_GEO.width-vw));
-  G.mapPan.y=clamp(G.mapPan.y, 0, Math.max(0, MAP_GEO.height-vh));
+  const z=mapZoom(), vw=VIEW.w/z, vh=VIEW.h/z;
+  G.mapPan.x=clamp(G.mapPan.x, Math.min(0, MAP_GEO.width-vw), Math.max(0, MAP_GEO.width-vw));
+  G.mapPan.y=clamp(G.mapPan.y, Math.min(0, MAP_GEO.height-vh), Math.max(0, MAP_GEO.height-vh));
 }
 /* 가운데를 정해 창을 옮긴다 */
 function centerMap(cx,cy){
   const z=mapZoom();
-  G.mapPan={ x:cx-MAP_GEO.width/(2*z), y:cy-MAP_GEO.height/(2*z) };
+  G.mapPan={ x:cx-VIEW.w/(2*z), y:cy-VIEW.h/(2*z) };
   clampPan();
 }
 function setMapPreset(name){
@@ -2889,29 +3014,30 @@ function zoomAt(sx, sy, factor){
   G.mapZoom=clamp(z0*factor, MAP_ZOOM_MIN, MAP_ZOOM_MAX);
   if(G.mapZoom===z0) return;
   if(before){
-    G.mapPan.x=before.x-(sx-CFG.GX)/G.mapZoom;
-    G.mapPan.y=before.y-(sy-CFG.GY)/G.mapZoom;
+    G.mapPan.x=before.x-(sx-VIEW.x)/G.mapZoom;
+    G.mapPan.y=before.y-(sy-VIEW.y)/G.mapZoom;
   }
-  G.mapFocus= G.mapZoom<=MAP_ZOOM_MIN+0.01? 'all' : 'free';
+  G.mapFocus= G.mapZoom<=MAP_ZOOM_MIN+0.02? 'all' : 'free';
   clampPan();
 }
 function overMap(x,y){
-  return x>=CFG.GX && y>=CFG.GY && x<=CFG.GX+MAP_GEO.width && y<=CFG.GY+MAP_GEO.height;
+  return x>=VIEW.x && y>=VIEW.y && x<=VIEW.x+VIEW.w && y<=VIEW.y+VIEW.h;
 }
 function mapScreenToLocal(x,y){
   if(!overMap(x,y)) return null;
   const V=activeMapView();
-  return {x:(x-CFG.GX)/V.zoom+V.x,y:(y-CFG.GY)/V.zoom+V.y};
+  return {x:(x-VIEW.x)/V.zoom+V.x,y:(y-VIEW.y)/V.zoom+V.y};
 }
 function beginMapView(g){
   const V=activeMapView();
-  g.save(); g.beginPath(); g.rect(CFG.GX,CFG.GY,MAP_GEO.width,MAP_GEO.height); g.clip();
+  g.save(); g.beginPath(); g.rect(VIEW.x,VIEW.y,VIEW.w,VIEW.h); g.clip();
   // 흔들림 — 싸움이 붙으면 지도만 흔든다. 판과 단추까지 흔들면 누르기가 어렵다.
   if(SHAKE>0.001){
     const a=SHAKE*SHAKE*5;
     g.translate((Math.random()-0.5)*a, (Math.random()-0.5)*a);
   }
-  g.translate(CFG.GX,CFG.GY); g.scale(V.zoom,V.zoom); g.translate(-CFG.GX-V.x,-CFG.GY-V.y);
+  // 창은 화면 어디에나 놓일 수 있지만, 그 안의 좌표계는 늘 MAP_O 를 원점으로 한다
+  g.translate(VIEW.x,VIEW.y); g.scale(V.zoom,V.zoom); g.translate(-MAP_O.x-V.x,-MAP_O.y-V.y);
   return V;
 }
 
@@ -3031,14 +3157,14 @@ function drawCountryLabels(g){
 }
 
 function drawMapModeControl(g){
-  const x=CFG.GX+10,y=CFG.GY+10,w=57,h=23;
+  const x=VIEW.x+10,y=VIEW.y+10,w=57,h=23;
   panel(g,x-3,y-3,w*2+6,h+6,.97);
   btn(g,x,y,w,h,'지형',G.mapMode==='terrain',()=>{G.mapMode='terrain';});
   btn(g,x+w,y,w,h,'정치',G.mapMode==='political',()=>{G.mapMode='political';});
 }
 
 function drawMapFocusControl(g){
-  const w=82,h=27,x=CFG.GX+MAP_GEO.width-w*2-10,y=CFG.GY+10;
+  const w=LAY.small?66:82, h=LAY.small?24:27, x=VIEW.x+VIEW.w-w*2-10, y=VIEW.y+10;
   panel(g,x-3,y-3,w*2+6,h+6,.97);
   btn(g,x,y,w,h,'한반도',G.mapFocus==='korea',()=>{ setMapPreset('korea'); });
   btn(g,x+w,y,w,h,'동아시아',G.mapFocus==='all',()=>{ setMapPreset('all'); });
@@ -3048,16 +3174,16 @@ function drawMapFocusControl(g){
   const zy=y+h+9, bw=30, rw=w*2-bw*2;
   panel(g,x-3,zy-3,w*2+6,h+6,.97);
   const z=mapZoom();
-  btn(g,x,zy,bw,h,'－',false, z>MAP_ZOOM_MIN+0.01? ()=>zoomAt(CFG.GX+MAP_GEO.width/2, CFG.GY+MAP_GEO.height/2, 1/1.35):null, z<=MAP_ZOOM_MIN+0.01);
+  btn(g,x,zy,bw,h,'－',false, z>MAP_ZOOM_MIN+0.01? ()=>zoomAt(VIEW.x+VIEW.w/2, VIEW.y+VIEW.h/2, 1/1.35):null, z<=MAP_ZOOM_MIN+0.01);
   g.fillStyle='#c9bfa8'; g.font='12px serif'; g.textAlign='center';
   g.fillText(z.toFixed(1)+'배', x+bw+rw/2, zy+18); g.textAlign='left';
-  btn(g,x+bw+rw,zy,bw,h,'＋',false, z<MAP_ZOOM_MAX-0.01? ()=>zoomAt(CFG.GX+MAP_GEO.width/2, CFG.GY+MAP_GEO.height/2, 1.35):null, z>=MAP_ZOOM_MAX-0.01);
+  btn(g,x+bw+rw,zy,bw,h,'＋',false, z<MAP_ZOOM_MAX-0.01? ()=>zoomAt(VIEW.x+VIEW.w/2, VIEW.y+VIEW.h/2, 1.35):null, z>=MAP_ZOOM_MAX-0.01);
   if(inRect(Mouse,{x:x,y:zy,w:w*2,h}))
     G.tip='지도 위에서 휠을 굴리면 짚은 자리를 붙들고 당긴다. 끌면 옮긴다. (＋ － 키로도 된다)';
 }
 
 function drawMap(g){
-  const C=CFG.CELL, MW=MAP_GEO.width, MH=MAP_GEO.height, political=G.mapMode==='political';
+  const C=CFG.CELL, MW=VIEW.w, MH=VIEW.h, political=G.mapMode==='political';
   ensureMapBase(); G.hover=provinceAtPoint(Mouse.x,Mouse.y);
   const mapView=beginMapView(g), inv=1/mapView.zoom;
   g.drawImage(MAPBASE,0,0); drawSeaRoutes(g);
@@ -3138,18 +3264,28 @@ function drawMap(g){
   if(FX.length) drawFX(g, inv);
   g.restore();
 
-  hz(CFG.GX,CFG.GY,MW,MH,()=>{ const id=provinceAtPoint(Mouse.x,Mouse.y); if(id){ G.sel=id; snd('pick'); } });
+  hz(VIEW.x,VIEW.y,MW,MH,()=>{ const id=provinceAtPoint(Mouse.x,Mouse.y); if(id){ G.sel=id; snd('pick'); } });
   drawMapModeControl(g);
   drawMapFocusControl(g);
-  g.strokeStyle='rgba(224,189,118,.28)'; g.lineWidth=1; g.strokeRect(CFG.GX+.5,CFG.GY+.5,MW-1,MH-1);
+  g.strokeStyle='rgba(224,189,118,.28)'; g.lineWidth=1; g.strokeRect(VIEW.x+.5,VIEW.y+.5,MW-1,MH-1);
 
-  let lx=CFG.GX+6, ly=CFG.GY+MH+16; g.font='11px serif';
+  /* 세력 표는 단추 앞에서 멈춘다.
+     자리를 정해 놓고 밀어 넣으면 좁은 판에서 단추 밑으로 기어들어 간다. */
+  const 보기w = LAY.small?116:150, 보기x = VIEW.x+MW-보기w;
+  let lx=VIEW.x+6, ly=VIEW.y+MH+16, 뺀수=0; g.font='11px serif';
   Object.keys(NATIONS).forEach(k=>{
-    if(!natProvs(k).length) return;
+    const n=natProvs(k).length; if(!n) return;
+    const 글=natName(k)+' '+n, 폭=22+g.measureText(글).width+(LAY.small?12:22);
+    if(lx+폭 > 보기x-8){ 뺀수++; return; }
     if(!blit(g,'flags',NAT_UV[k],lx,ly-11,48,32,18,12)){ g.fillStyle=NATIONS[k].col; g.fillRect(lx,ly-9,12,10); }
-    g.fillStyle='#c9bfa8'; g.fillText(natName(k)+' '+natProvs(k).length,lx+22,ly); lx+=104;
+    g.fillStyle='#c9bfa8'; g.fillText(글,lx+22,ly); lx+=폭;
   });
-  btn(g,CFG.GX+MW-150,ly-16,150,22,G.view==='unrest'?'보기 · 민심':'보기 · 세력',false,
+  if(뺀수){
+    g.fillStyle='rgba(150,145,135,.75)'; g.fillText('+'+뺀수, lx, ly);
+    if(inRect(Mouse,{x:lx-4,y:ly-12,w:34,h:16}))
+      G.tip='자리가 좁아 '+뺀수+'세력을 접어 두었다. 지도를 눌러 보면 어느 세력인지 나온다.';
+  }
+  btn(g,보기x,ly-16,보기w,22,G.view==='unrest'?'보기 · 민심':'보기 · 세력',false,
       ()=>{G.view=G.view==='unrest'?'nat':'unrest';});
 }
 
@@ -3157,7 +3293,7 @@ function drawMap(g){
 const TABS=['국정','외교','기술','신하','정책','기록'];
 const SCROLL={};                 // 탭마다 굴린 만큼 기억한다
 function drawSide(g){
-  const x=CFG.GX+CFG.GW*CFG.CELL+10, y=CFG.GY, w=CFG.W-x-8, h=CFG.H-y-8;
+  const x=LAY.side.x, y=LAY.side.y, w=LAY.side.w, h=LAY.side.h;
   // 맨 위가 탭이라 머리 장식은 가려지거나 삐져나온다
   panel(g,x,y,w,h,null,{head:false});
   // 탭
@@ -3168,7 +3304,8 @@ function drawSide(g){
   const cx=x+12, cy=y+46, cw=w-24, ch=h-46-8;
 
   // 굴림 — 이 패널 위에 손가락/휠이 있을 때만
-  const 안 = inRect(Mouse,{x:x,y:cy-8,w:w,h:ch+8});
+  const 굴점 = (Mouse.wheelX!=null)? {x:Mouse.wheelX,y:Mouse.wheelY} : Mouse;
+  const 안 = inRect(굴점,{x:x,y:cy-8,w:w,h:ch+8});
   const key=G.tab;
   let sc = SCROLL[key]||0;
   if(안 && Mouse.wheel){ sc += Mouse.wheel; }
@@ -3574,7 +3711,7 @@ function sideLog(g,x,y,w){
 
 /* 아래 — 고른 고을과 명령 */
 function drawBottom(g){
-  const y=CFG.GY+CFG.GH*CFG.CELL+26, h=CFG.H-y-8, x=CFG.GX, w=CFG.GW*CFG.CELL;
+  const y=LAY.bottom.y, h=LAY.bottom.h, x=LAY.bottom.x, w=LAY.bottom.w;
   // 이 판은 맨 위부터 글월이다 — 머리 장식을 깔면 이름과 수치 뒤에 문양이 낀다
   panel(g,x,y,w,h,null,{head:false});
   const P=G.sel? G.provs[G.sel]:null;
@@ -3678,12 +3815,33 @@ function drawBottom(g){
       위태 = 위협>0 && winChance(위협, 수비)>0.5;
     }
     // 수치 — 이름표가 길어져도 겹치지 않게 이름표 너비도 함께 잰다
-    let sx=x+226;
-    const 수치=[['인구',num(P.pop)],['개발',P.dev],['농지',P.farm],['상업',P.trade],
-                ['성곽',P.fort],['병력 · '+unitOf(P).nm,num(P.army)]];
+    const 좁=LAY.phone, 짧=LAY.phone||LAY.small;
+    const 수치=[['인구',짧?numS(P.pop):num(P.pop)],['개발',P.dev],['농지',P.farm],['상업',P.trade],
+                ['성곽',P.fort],[짧?('병력·'+unitOf(P).nm):('병력 · '+unitOf(P).nm), 짧?numS(P.army):num(P.army)]];
     // 우리 고을이면 '수비'를 맨 앞에 세운다 — 이 고을이 실제로 버티는 힘
-    if(수비!=null) 수치.unshift(['수비', num(Math.round(수비)), 위태?'#e08a80':'#cfc7b6', 위태?'위태롭다':null]);
-    수치.forEach(([k,v,col,note])=>{
+    if(수비!=null) 수치.unshift(['수비', 짧?numS(수비):num(Math.round(수비)), 위태?'#e08a80':'#cfc7b6', 위태?'위태':null]);
+    /* 좁은 판에서는 한 줄에 다 못 들어간다 — 넷씩 두 줄로 접는다 */
+    const 열수 = 좁? 4 : 수치.length;
+    const 칸너비 = 좁? (w-24)/열수 : 0;
+    const 최소칸 = LAY.small? 52 : 64;
+    let sx=좁? x+12 : x+(LAY.small? 196 : 226), sy0=좁? y+62 : y+22;
+    수치.forEach(([k,v,col,note],i)=>{
+      if(좁){
+        const r=Math.floor(i/열수), c2=i%열수;
+        sx=x+12+c2*칸너비; 
+        const by=sy0+r*34;
+        g.font='9px serif';
+        g.fillStyle= col&&위태&&k==='수비'? '#c4534a' : 'rgba(150,145,135,.75)';
+        g.fillText(k, sx, by);
+        g.font='13px serif'; g.fillStyle= col||'#e8e1d1';
+        g.fillText(v+'', sx, by+15);
+        if(note){ g.font='8px serif'; g.fillStyle='#c4534a'; g.fillText(note, sx, by+24); }
+        if(k==='수비' && inRect(Mouse,{x:sx-4,y:by-10,w:칸너비,h:32}))
+          G.tip = '이 고을이 실제로 버티는 힘 '+num(Math.round(수비))
+            + ' = 병력 '+num(P.army)+' + 원군 '+num(Math.round(원군))
+            + (위협처? ('  ·  '+위협처.nm+'이 치면 '+Math.round(winChance(위협,수비)*100)+'%') : '');
+        return;
+      }
       g.font='10px serif'; const lw=g.measureText(k).width;
       g.fillStyle= col&&위태&&k==='수비'? '#c4534a' : 'rgba(150,145,135,.75)';
       g.fillText(k, sx, y+22);
@@ -3698,62 +3856,89 @@ function drawBottom(g){
           + ' × 병종 '+unitOf(P).def.toFixed(2)
           + (위협처? ('    ·  가장 센 이웃 '+위협처.nm+'이(가) 치면 '+위협처.nm+'의 이길 낌새 '
                       +Math.round(winChance(위협,수비)*100)+'%') : '    ·  맞댄 남의 고을이 없다');
-      sx+=Math.max(64, Math.max(vw,lw,nw)+26);
+      sx+=Math.max(최소칸, Math.max(vw,lw,nw)+(LAY.small?14:26));
     });
-    g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText('민심', sx, y+22);
-    bar(g,sx,y+28,80,10, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
+    if(좁){
+      // 빈 칸 하나에 민심을 넣는다 — 따로 두면 수치 줄과 겹친다
+      const r=Math.floor(수치.length/열수), c2=수치.length%열수;
+      const mx2=x+12+c2*칸너비, my2=sy0+r*34;
+      g.fillStyle='rgba(150,145,135,.75)'; g.font='9px serif'; g.fillText('민심', mx2, my2);
+      bar(g, mx2, my2+5, Math.min(80,칸너비-14), 9, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
+    } else {
+      // 판 밖으로 나가지 않게 남은 자리에 맞춘다
+      const 남폭=Math.min(80, x+w-14-sx);
+      if(남폭>=24){
+        g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText('민심', sx, y+22);
+        bar(g,sx,y+28,남폭,10, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
+      }
+    }
     // 명령
     const N=G.nations.kor;
-    let bx=x+16, by=y+58;
-    ACTIONS.forEach(a=>{
+    const 열 = LAY.phone? 3 : ACTIONS.length;
+    /* 판이 좁으면 단추도 같이 좁힌다. 116 을 고집하면 줄이 판을 넘어가
+       오른쪽 정무 구슬 위로 올라탄다 — 눕힌 손전화가 그랬다. */
+    const 단추w = LAY.phone? (w-24-(열-1)*6)/열
+                           : Math.min(116, (w-30-(열-1)*6)/열);
+    const 단추간 = 단추w+6;
+    const 줄높이 = LAY.phone? 44 : 0;
+    let bx=x+16, by=LAY.phone? y+132 : y+58;
+    ACTIONS.forEach((a,ai)=>{
+      if(LAY.phone){ const r=Math.floor(ai/열); bx=x+12+(ai%열)*단추간; by=(y+132)+r*줄높이; }
       const ok=a.need(P);
       const q=actQuote(a,P);
       const { 별칙, 못산다, c, 돈 } = q;
       const can=ok&&q.ok;
-      btn(g, bx, by, 116, 28, a.nm+'  '+num(c), 별칙&&can,
+      btn(g, bx, by, 단추w, LAY.phone?30:28, LAY.phone? (a.nm+' '+num(c)) : (a.nm+'  '+num(c)), 별칙&&can,
         can? ()=>{ N.gold-=c;
           if(별칙) byeolPay(); else N.adm-=a.adm;
           a.run(P); recalc(); } : null, !can);
-      g.fillStyle= !can? 'rgba(90,86,80,.5)' : (별칙?'rgba(196,140,74,.95)':'rgba(224,189,118,.7)');
-      g.font='9px serif';
-      g.fillText(못산다? ('정무 '+a.adm+' 필요') : 별칙? ('별칙 x'+byeolMul().toFixed(1)) : ('정무 '+a.adm),
-                 bx+2, by+38);
-      if(inRect(Mouse,{x:bx,y:by,w:116,h:28}))
+      if(!LAY.phone){
+        g.fillStyle= !can? 'rgba(90,86,80,.5)' : (별칙?'rgba(196,140,74,.95)':'rgba(224,189,118,.7)');
+        g.font='9px serif';
+        g.fillText(못산다? ('정무 '+a.adm+' 필요') : 별칙? ('별칙 x'+byeolMul().toFixed(1)) : ('정무 '+a.adm),
+                   bx+2, by+38);
+      }
+      if(inRect(Mouse,{x:bx,y:by,w:단추w,h:28}))
         G.tip = actDesc(a,P)
           + (못산다? '  ·  군사를 일으키는 일은 국고로 살 수 없다. 정무 '+a.adm+'이 남아 있어야 한다'
              : ok? (돈? (별칙? '  ·  정무를 다 썼다. 별칙으로 밀어붙이면 값이 '+byeolMul().toFixed(1)+'배, 신하 충성 −3, 민심 −0.6' : '')
                       : '  · 국고가 모자란다')
                  : '  · 지금은 할 수 없다');
-      bx+=122;
+      if(!LAY.phone) bx+=단추간;
     });
   }
   // 정무와 한 해 보내기
   const N=G.nations.kor;
-  const bw=170, bx=x+w-bw-14, by=y+h-40;
+  /* 좁은 판에서는 이름표와 구슬을 왼쪽 아래에 세운다.
+     오른쪽 끝에 붙이면 명령 단추 줄과 겹친다. */
+  const 좁2=LAY.phone||LAY.small;
+  const bw=좁2?152:170, bx=x+w-bw-14, by=y+h-40;
   const mx=admMax(), 남=N.adm||0;
-  // 이름표와 구슬을 한 줄에 두면 겹치고(정무가 늘면 구슬이 이름표를 파고든다),
-  // 명령 단추 줄에 두면 단추 밑의 '정무 n' 글자와 부딪힌다.
-  // 그래서 명령 단추가 끝나는 오른쪽 빈자리에 두 줄로 세운다.
-  const 끝=x+w-14;
-  const 알=Math.min(mx,12), r=알>8?3.5:5, 간=알>8?10:14;
-  const 시작=끝-알*간;
-  g.textAlign='right'; g.font='11px serif';
+  /* 이름표와 구슬을 한 줄에 두면 겹친다. 좁은 판에서는 왼쪽에 세우고
+     '한 해를 보낸다'는 오른쪽에 둔다 — 엄지가 닿는 자리다. */
+  const 끝 = 좁2? x+12 : x+w-14;
+  const 알=Math.min(mx,12), r=알>8?3.5:5, 간=좁2? 12 : (알>8?10:14);
+  const 시작 = 좁2? 끝 : 끝-알*간;
+  g.textAlign=좁2?'left':'right'; g.font='10px serif';
   g.fillStyle= 남? 'rgba(150,145,135,.85)':'rgba(196,140,74,.95)';
-  g.fillText(남? ('올해 남은 정무'+(mx>12? ' (+'+(mx-12)+')' : ''))
-                : ('정무를 다 썼다 · 별칙 '+byeolCount()+'회'), 끝, y+66);
+  g.fillText(남? ((좁2?'남은 정무':'올해 남은 정무')+(mx>12? ' (+'+(mx-12)+')' : ''))
+                : ('정무를 다 썼다'+(좁2?'':' · 별칙 '+byeolCount()+'회')),
+             끝, 좁2? y+h-32 : y+66);
   g.textAlign='left';
-  for(let i=0;i<알;i++){
-    const on=i<남;
+  for(let i2=0;i2<알;i2++){
+    const on=i2<남;
     g.fillStyle= on?'#e0bd76':'rgba(90,86,80,.5)';
-    g.beginPath(); g.arc(시작+i*간+간/2, y+82, r, 0, 7); g.fill();
+    g.beginPath(); g.arc(시작+i2*간+간/2, 좁2? y+h-16 : y+82, r, 0, 7); g.fill();
   }
-  if(inRect(Mouse,{x:시작-6,y:y+54,w:(끝-시작)+6,h:38}))
+  if(inRect(Mouse,{x:시작-6,y:(좁2? y+h-44 : y+54),w:(좁2? 알*간+12 : (끝-시작)+6),h:38}))
     G.tip='한 해에 '+mx+'번. 고을 여섯에 하나, 정치 좋은 수령 셋에 하나씩 는다.'
           + (남?'':'  ·  더 하려면 별칙으로 국고를 태운다');
-  btn(g,bx,by,bw,32, G.ended? '끝났다' : '한 해를 보낸다  ▶', false,
+  btn(g,bx,by,bw,좁2?34:32, G.ended? '끝났다' : '한 해를 보낸다  ▶', false,
       G.ended?null:()=>{ snd('year'); endTurn(); }, G.ended);
-  g.fillStyle='rgba(120,115,105,.8)'; g.font='10px serif'; g.textAlign='right';
-  g.fillText('Space 로도 넘길 수 있다', x+w-14, by-6); g.textAlign='left';
+  if(!좁2){
+    g.fillStyle='rgba(120,115,105,.8)'; g.font='10px serif'; g.textAlign='right';
+    g.fillText('Space 로도 넘길 수 있다', x+w-14, by-6); g.textAlign='left';
+  }
 }
 
 /* 연말 결산 — 한 해에 무엇이 들어오고 나갔는지 */
@@ -3764,7 +3949,7 @@ function drawReport(g){
   const evN=Math.min(4, B.events.length);
   const h = 286 + (B.dip&&B.dip.length? 25:0) + (B.over? 25:0)
           + (B.events.length? 31+evN*16+(B.events.length>4?14:0) : 0) + 66;
-  const w=600, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(600), x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   bigPanel(g,x,y,w,h);
   g.textAlign='center';
   g.fillStyle='#e0bd76'; g.font='22px serif'; g.fillText(G.year+'년 결산', CFG.W/2, y+42);
@@ -3831,7 +4016,13 @@ function drawReport(g){
 function drawChoice(g){
   const E=G.popup.ev;
   g.fillStyle='rgba(4,5,8,.80)'; g.fillRect(0,0,CFG.W,CFG.H);
-  const w=680, h=430, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(680);
+  /* 창이 좁아지면 글월이 더 여러 줄로 접힌다 — 높이도 따라 늘려야
+     선택지가 창 밖으로 밀려나지 않는다. */
+  g.font='13px serif';
+  const 줄=wrapText(g,E.b,w-80).slice(0, LAY.phone?7:3);
+  const h=Math.min(CFG.H-24, 154 + 줄.length*19 + (E.c||[]).length*70);
+  const x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   bigPanel(g,x,y,w,h);
   g.textAlign='center';
   g.fillStyle='rgba(150,145,135,.8)'; g.font='12px serif'; g.fillText(G.year+'년', CFG.W/2, y+34);
@@ -3839,7 +4030,7 @@ function drawChoice(g){
   g.textAlign='left';
   g.fillStyle='#d9d2c2'; g.font='13px serif';
   let yy=y+100;
-  wrapText(g,E.b,w-80).slice(0,3).forEach(t=>{ g.fillText(t, x+40, yy); yy+=19; });
+  줄.forEach(t=>{ g.fillText(t, x+40, yy); yy+=19; });
   yy+=10;
   E.c.forEach((c,i)=>{
     const bh=62, by=yy;
@@ -3915,7 +4106,7 @@ function drawPopup(g){
   if(P.kind==='choice'){ drawChoice(g); return; }
   g.fillStyle='rgba(4,5,8,.76)'; g.fillRect(0,0,CFG.W,CFG.H);
   const 끝=(P.kind==='end');
-  const w=600, h=끝?(200+G.scores.length*19+90):210;
+  const w=창폭(600), h=끝?(200+G.scores.length*19+90):210;
   const x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   bigPanel(g,x,y,w,h);
   g.textAlign='center';
@@ -4066,17 +4257,20 @@ function drawTitle(g){
   HIT.length=h0;
   g.fillStyle='rgba(6,7,10,.72)'; g.fillRect(0,0,CFG.W,CFG.H);
 
+  /* 세로 판은 720 보다 한참 길다. 위쪽에 몰아 두면 아래가 텅 빈다 —
+     남는 만큼 통째로 내려 가운데에 앉힌다. */
+  const 내림 = Math.round(Math.max(0, CFG.H-720)/2);
   g.textAlign='center';
   g.fillStyle='#e0bd76'; g.font='72px serif';
-  g.fillText('동아', CFG.W/2, 190);
-  g.fillStyle='rgba(200,192,175,.85)'; g.font='17px serif';
-  g.fillText('조선에서 현대까지 — 한·중·일 대전략', CFG.W/2, 228);
+  g.fillText('동아', CFG.W/2, 내림+190);
+  g.fillStyle='rgba(200,192,175,.85)'; g.font=(LAY.phone?'15px':'17px')+' serif';
+  g.fillText('조선에서 현대까지 — 한·중·일 대전략', CFG.W/2, 내림+228);
   g.fillStyle='rgba(140,135,125,.7)'; g.font='12px serif';
-  g.fillText('1392 － 2025 · 육백서른세 해', CFG.W/2, 254);
+  g.fillText('1392 － 2025 · 육백서른세 해', CFG.W/2, 내림+254);
   g.textAlign='left';
 
   const 이어=slotInfo('auto');
-  let y=300; const bw=260, bx=(CFG.W-bw)/2;
+  let y=내림+300; const bw=Math.min(300, CFG.W-60), bx=(CFG.W-bw)/2;
   /* 난이도 — 새로 시작하기 전에 고른다 */
   g.textAlign='center'; g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif';
   g.fillText('난이도', CFG.W/2, y-14); g.textAlign='left';
@@ -4119,7 +4313,7 @@ function drawTitle(g){
 
 /* 저장/불러오기 칸 목록 */
 function drawSlots(g, mode){
-  const w=560, h=430, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(560), h=430, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.80)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='22px serif';
@@ -4183,7 +4377,7 @@ function drawSlots(g, mode){
 /* 최고 기록 */
 function drawRecords(g){
   const recs=loadRecords();
-  const w=600, h=460, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(600), h=460, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.82)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='22px serif';
@@ -4206,13 +4400,16 @@ function drawRecords(g){
     g.fillStyle='rgba(160,155,145,.9)'; g.font='11px serif';
     g.fillText(r.y+'년 · '+(r.how||''), x+134, yy+4);
     g.fillStyle='rgba(130,125,115,.8)'; g.font='10px serif'; g.textAlign='right';
-    g.fillText('고을 '+r.prov+' · 정통 '+(r.legit!=null?r.legit:'-')
-               +' · 마디 '+(r.node!=null?r.node:'-')
-               +(r.at? '   '+r.at : ''), x+w-36, yy+4);
+    // 좁은 판에서는 뒤쪽 잔글씨를 줄인다 — 아니면 앞의 글월을 덮는다
+    g.fillText(LAY.phone? ('고을 '+r.prov)
+               : ('고을 '+r.prov+' · 정통 '+(r.legit!=null?r.legit:'-')
+                  +' · 마디 '+(r.node!=null?r.node:'-')
+                  +(r.at? '   '+r.at : '')), x+w-36, yy+4);
     g.textAlign='left';
     yy+=rh;
   });
-  btn(g, CFG.W/2-140, y+h-46, 120, 30, '돌아간다', false, ()=>{
+  // 단추가 하나뿐이면 가운데에 세운다
+  btn(g, recs.length? CFG.W/2-140 : CFG.W/2-60, y+h-46, 120, 30, '돌아간다', false, ()=>{
     MENU = (MENU && MENU.from==='title')? null : { tab:null };
     if(SCENE==='title') MENU=null;
   });
@@ -4234,7 +4431,7 @@ function slider(g,x,y,w,v,fn){
   hz(x-4,y-8,w+8,24, ()=>{ fn(clamp((Mouse.x-x)/w, 0, 1)); });
 }
 function drawSound(g){
-  const w=440, h=330, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(440), h=330, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.82)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='22px serif';
@@ -4282,7 +4479,7 @@ function drawMenu(g){
   if(MENU && MENU.tab==='sound'){ drawSound(g); return; }
   if(MENU && MENU.tab==='records'){ drawRecords(g); return; }
   if(MENU && MENU.tab){ drawSlots(g, MENU.tab); return; }
-  const w=300, h=436, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(300), h=436, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.78)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='20px serif';
@@ -4310,7 +4507,7 @@ function drawMenu(g){
 
 function drawConfirm(g){
   const C=MENU.confirm;
-  const w=420, h=180, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(420), h=180, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.82)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center';
@@ -4389,7 +4586,7 @@ function tick(){
       if(inRect(Mouse,z)){ if(z.fn){ snd('click', 0.03); z.fn(); } break; }
     }
   }
-  Mouse.rclick=false; Mouse.wheel=0;
+  Mouse.rclick=false; Mouse.wheel=0; Mouse.wheelX=null; Mouse.wheelY=null;
   Key.pressed={};
   requestAnimationFrame(tick);
 }

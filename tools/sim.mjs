@@ -77,7 +77,7 @@ function fakeCanvas(w, h){
 /* 캔버스 밖의 조각들 — 고을 선택 상자와 화면 읽기용 알림 */
 function fakeElement(tag){
   return {
-    tagName: (tag || 'div').toUpperCase(), style: {}, children: [],
+    tagName: (tag || 'div').toUpperCase(), style: {}, dataset: {}, children: [],
     hidden: false, value: '', textContent: '', disabled: false,
     addEventListener(){}, removeEventListener(){},
     appendChild(child){ this.children.push(child); return child; },
@@ -174,6 +174,8 @@ function boot(seed){
 function uiCheck(){
   const api = boot(4242);
   let fail = 0, ran = 0;
+  /* 화면 크기를 바꿔 가며 본다 — 손전화 판이 생긴 뒤로는 한 벌만 봐서는 모른다 */
+  const 화면 = (w,h) => { api.sandbox.innerWidth=w; api.sandbox.innerHeight=h; api.call('resize'); };
   const shot = (label, setup) => {
     try{
       setup();
@@ -268,6 +270,26 @@ function uiCheck(){
     for(let e = 0; e < 8; e++) api.call('scoreEra', e);
     G.popup = { kind:'end', title:'육백 년', body:'여기까지 왔다.', y:2025, total:900, rank:2 };
   });
+
+  /* 세 가지 판 크기에서 모든 탭과 창을 한 번씩 */
+  [[1280,720,'넓은 판'],[900,520,'좁은 판'],[390,844,'세로 판(손전화)']].forEach(([w,h,nm])=>{
+    화면(w,h);
+    shot(nm+' · 제목', () => api.ev("SCENE='title'; MENU=null;"));
+    TABS.forEach(t => shot(nm+' · '+t, () => {
+      api.ev("SCENE='play'; MENU=null;");
+      G.tab=t; G.sel='hans'; G.popup=null; G.report=null;
+    }));
+    shot(nm+' · 고을 안 고름', () => { G.sel=null; });
+    shot(nm+' · 남의 고을', () => { G.sel='liao'; });
+    shot(nm+' · 결산', () => { api.call('endTurn'); });
+    shot(nm+' · 사건', () => { G.report=null; G.popup={kind:'choice', ev:api.get('EVENTS')[0], y:G.year}; });
+    shot(nm+' · 메뉴', () => { G.popup=null; api.ev("MENU={tab:null};"); });
+    shot(nm+' · 소리', () => api.ev("MENU={tab:'sound'};"));
+    shot(nm+' · 기록', () => api.ev("MENU={tab:'records'};"));
+    shot(nm+' · 결말', () => { api.ev("MENU=null;");
+      G.popup={kind:'end',title:'육백 년',body:'여기까지 왔다.',y:2025,total:900,rank:1}; });
+  });
+  화면(1280,720);
 
   console.log(fail ? `\n화면 점검 — ${ran}개 그림, ${fail}개 터짐`
                    : `화면 점검 — ${ran}개 화면 모두 그려짐`);
