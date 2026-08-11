@@ -481,6 +481,40 @@ const UNITS=[
   { nm:'기계화군',navy:'호위함', horse:'기갑',   atk:2.05, def:1.64 },
   { nm:'현대군',  navy:'이지스함',horse:'기갑',  atk:2.35, def:1.82 }
 ];
+/* ================================================================
+   수비병 — 고을이 스스로 기르는 군사
+   ----------------------------------------------------------------
+   예전에는 이 셈이 조선 고을에만 돌았다(if P.nat==='kor'). 이웃 고을은
+   해마다 주사위로 육십에서 이백사십만 늘었다. 그래서 인구 사백만의 명나라
+   고을이 사천 남짓으로 지키고, 인구 오십만의 조선 고을이 삼만오천을 모아
+   밀고 들어갈 수 있었다. 1466년에 중국과 일본을 다 먹을 수 있던 까닭이다.
+
+   이제 모든 나라가 같은 셈을 쓴다. 다만 곱절로 늘지는 않는다 —
+   옛 왕조는 인구를 다 병사로 세울 수 없었다. 먹이고 부릴 수 있는 만큼만이다.
+   ================================================================ */
+function garrisonTarget(P){
+  let g = Math.pow(Math.max(0,P.pop), 0.72) * 0.167 * tagVal(P,'garrison',1);
+  if(P.nat==='kor' && policyVal('hunryeon')) g*=1.6;
+  if(!isCore(P)) g*=0.55;                 // 점령지는 제 땅처럼 지키지 않는다
+  return g;
+}
+
+/* ================================================================
+   본토와 점령지
+   ----------------------------------------------------------------
+   빼앗은 땅은 빼앗은 날부터 내 땅이 아니다. 세가 걷히지 않고, 어지럽고,
+   지키는 데 사람이 더 든다. 오래 다스리고 수령을 두어야 비로소 본토가 된다.
+   ================================================================ */
+const ASSIM_YEARS=45;                      // 이만큼 잘 다스려야 본토가 된다
+function isCore(P){ return P.nat===P.home || (P.assim||0)>=ASSIM_YEARS; }
+function occupied(k){ return natProvs(k).filter(p=>!isCore(p)); }
+/* 점령지를 얼마나 지고 갈 수 있는가 — 본토가 튼튼할수록 더 진다 */
+function holdAllowance(){
+  const core=natProvs('kor').filter(isCore).length;
+  return 2 + Math.floor(core/5);
+}
+function overExtend(){ return Math.max(0, occupied('kor').length - holdAllowance()); }
+
 /* 고을의 병종 — 땅의 성격이 무엇을 기르는지를 정한다 */
 function unitOf(p){
   const U=UNITS[Math.min(UNITS.length-1, G.era)];
@@ -643,7 +677,7 @@ function newGame(){
   }
   /* 2) 지방을 만들고 씨앗을 심는다 */
   PROVDEF.forEach(p=>{
-    G.provs[p.id]={ id:p.id, nm:p.nm, nat:p.nat, t:p.t, tag:p.tag, cap:!!p.cap,
+    G.provs[p.id]={ id:p.id, nm:p.nm, nat:p.nat, home:p.nat, assim:0, t:p.t, tag:p.tag, cap:!!p.cap,
       pop:0, dev:0, farm:0, trade:0, fort:0, unrest:0, army:0, cells:[], seed:p.seed };
   });
   /* 3) 바다를 건너지 않는 물결 퍼짐으로 땅을 나눈다 */
@@ -796,7 +830,10 @@ function admMax(){
   if(G.era>=3) n++;                      // 근대 관료제
   if(G.era>=5) n++;
   if(G.era>=7) n++;
-  n += Math.floor(natProvs('kor').length/6);          // 고을이 여섯이면 손 하나 더
+  // 손은 본토에서만 는다. 점령지는 다스릴 손을 오히려 잡아먹는다 —
+  // 예전에는 빼앗을수록 정무가 늘어 정복이 정복을 불렀다.
+  n += Math.floor(natProvs('kor').filter(isCore).length/6);
+  n -= Math.floor(occupied('kor').length/3);
   const 유능=G.officials.filter(o=>o.post && o.pol>=70).length;
   n += Math.floor(유능/3);                            // 정치 좋은 수령 셋에 손 하나
   if(policyVal('gunjeok')) n--;                       // 군적은 조정을 군무에 묶는다
@@ -908,6 +945,9 @@ function endTurn(){
   const M=mods();
 
   /* ── 지방 산출 ── */
+  // 싸움이 길어지면 뒤가 시끄럽다. 정복은 앞에서만 값을 치르지 않는다.
+  const 전쟁수 = DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).war).length;
+  const 전쟁피로 = 전쟁수*0.5 + overExtend()*0.35;
   let food=0, gold=0, expPot=0;
   Object.values(G.provs).forEach(P=>{
     const T=TERR[P.t];
@@ -917,19 +957,38 @@ function endTurn(){
     const 규모=Math.pow(P.pop/100000, 0.8);
     let f=P.farm*T.food*(1+govE*0.5)*규모*tagVal(P,'farm',1);
     let t=P.trade*T.trade*(1+govE*0.6)*규모*tagVal(P,'trade',1)*goodVal(P,'trade',1);
+    /* 평시 수비병은 스스로 채워진다 — 이제 모든 나라가 같은 셈을 쓴다.
+       상비군 수준까지만이다. 그 위로 불리려면 모병을 해야 하고,
+       불린 만큼 군량과 녹을 먹는다. */
+    const 수비=garrisonTarget(P);
+    if(P.army<수비){
+      const 속도 = P.pop*0.0004*(P.nat==='kor'? M.armyReg : 1)*tagVal(P,'garrison',1);
+      P.army=Math.round(Math.min(수비, P.army + 속도));
+    }
     if(P.nat==='kor'){
+      const 내땅=isCore(P);
+      // 점령지는 제 나라로 여기지 않는다 — 세도 곡식도 반쯤만 걷힌다
+      if(!내땅){ f*=0.45; t*=0.45; }
       f*=M.food; t*=M.trade;
       t *= (1 - P.unrest/260);                  // 어지러운 고을은 세가 걷히지 않는다
       food+=f; gold+=t;
       // 팔 물건 — 조약이 없으면 값이 되지 않는다. 뒤에서 한꺼번에 셈한다.
-      expPot += goodVal(P,'exp',0) * (1+P.trade/44) * 규모;
-      // 평시 수비병은 스스로 조금씩 채워진다. 다만 상비군 수준까지만 —
-      // 그 위로 불리려면 모병을 해야 하고, 불린 만큼 군량과 녹을 먹는다.
-      const 수비=P.pop*0.006*(policyVal('hunryeon')?1.6:1)*tagVal(P,'garrison',1);
-      if(P.army<수비) P.army=Math.round(Math.min(수비, P.army + P.pop*0.0004*M.armyReg*tagVal(P,'garrison',1)));
+      if(내땅) expPot += goodVal(P,'exp',0) * (1+P.trade/44) * 규모;
       // 민심 — 수령이 없다고 벌하지 않는다. 좋은 수령을 앉히면 좋아진다.
-      const drift = (gov? (-1.4-govP*1.2) : 0.05) + tagVal(P,'drift',0);
+      let drift = (gov? (-1.4-govP*1.2) : 0.05) + tagVal(P,'drift',0);
+      if(!내땅) drift += 1.8;                    // 빼앗긴 백성은 쉬이 가라앉지 않는다
+      drift += 전쟁피로;                          // 싸움이 길어지면 뒤가 시끄럽다
       P.unrest = clamp(P.unrest + drift + (P.fort>2?-0.2:0.15), 0, 100);
+      /* 다스림이 오래 이어지면 비로소 본토가 된다 */
+      if(!내땅){
+        if(gov && P.unrest<40) P.assim=(P.assim||0)+1;
+        else P.assim=Math.max(0,(P.assim||0)-0.5);
+        if((P.assim||0)>=ASSIM_YEARS){
+          P.home='kor'; P.assim=ASSIM_YEARS;
+          log(P.nm+'이(가) 이제 조선 땅으로 여겨진다.');
+          B.events.push(P.nm+' 편입');
+        }
+      }
       // 개성의 상인들은 국고에 이자를 붙인다
       if(tagVal(P,'interest',0)) B.interest=(B.interest||0)+N.gold*tagVal(P,'interest',0);
       // 어지러움이 오래가면 떨어져 나간다.
@@ -940,9 +999,12 @@ function endTurn(){
       if(P.unrest>=등돌림){ P.rebel=(P.rebel||0)+1; } else P.rebel=Math.max(0,(P.rebel||0)-1);
       if(P.rebel>=참는햇수 && !P.cap && !B.rebelled){
         B.rebelled=1;
-        P.nat='ind'; P.unrest=40; P.rebel=0; P.army=Math.round(P.army*0.6);
+        // 점령지는 제 나라로 돌아간다 — 남의 백성은 남의 임금을 부른다
+        const 돌아갈곳 = (!isCore(P) && P.home!=='kor' && G.nations[P.home])? P.home : 'ind';
+        P.nat=돌아갈곳; P.unrest=40; P.rebel=0; P.assim=0; P.army=Math.round(P.army*0.6);
         G.plateDirty=true;
-        log(P.nm+'이(가) 조정을 등졌다.');
+        log(돌아갈곳==='ind'? (P.nm+'이(가) 조정을 등졌다.')
+                            : (P.nm+'이(가) '+natName(돌아갈곳)+'으로 돌아섰다.'));
         B.events.push(P.nm+' 반란');
         N.stab=clamp(N.stab-10,0,100);
       } else if(P.rebel===참는햇수-2){
@@ -969,7 +1031,9 @@ function endTurn(){
      부처 열둘이 되고, 성곽 대신 항만과 철도가 된다. */
   const 물가 = 1 + G.era*0.8;
   B.upkeepArmy = N.army*0.008*M.upArmy*(1+G.era*0.35);
-  B.upkeepPay  = (G.officials.length*4 + natProvs('kor').length*8) * 물가;
+  // 점령지는 다스리는 데 손이 곱절로 든다
+  B.upkeepPay  = (G.officials.length*4 + natProvs('kor').length*8
+                  + occupied('kor').length*14) * 물가;
   B.upkeepFort = natProvs('kor').reduce((a,p)=>a+p.fort*3,0) * 물가;
   // 군량과 백성 몫 — 곡식이 남아돌면 개간도 진휼도 뜻이 없어진다.
   B.eaten      = N.army/1000*4 + N.pop/9500;
@@ -1024,15 +1088,17 @@ function endTurn(){
   // 고을이 주는 몫 — 도읍이 우리 것이면 조정이 서고, 잃으면 흔들린다
   const 고을덕 = 우리.reduce((a,p)=>a+tagVal(p,'stab',0), 0);
   // 정통 — 조정이 무슨 명분으로 서 있는가. 이제 실제로 민심을 민다.
+  // 과대팽창 — 지고 갈 수 있는 것보다 많이 쥐면 조정이 흔들린다
+  B.over = overExtend();
   B.stabIn = (N.food>0? 0.7 : -4) + 배치*0.9 - avgUn*0.045 + (충성-50)*0.012
-             + (G.legit-50)*0.020 + M.stab + 고을덕;
+             + (G.legit-50)*0.020 + M.stab + 고을덕 - B.over*1.2;
   N.stab=clamp(N.stab + B.stabIn, 0, 100);
 
   /* ── 정통 ──
      도읍을 쥐고 백성이 편안하면 명분이 절로 선다. 도읍을 잃으면 급히 무너진다.
      조공은 평화를 사 오지만 그 값을 여기서 치른다. */
   const 도읍우리 = !!(G.provs.hans && G.provs.hans.nat==='kor');
-  const 명분기준 = clamp(46 + (N.stab-50)*0.35 + (도읍우리? 4 : -26), 5, 95);
+  const 명분기준 = clamp(46 + (N.stab-50)*0.35 + (도읍우리? 4 : -26) - B.over*4, 5, 95);
   B.legitIn = clamp((명분기준-G.legit)*0.08, -2.5, 2.5) + M.legit;
   G.legit = clamp(G.legit + B.legitIn, 0, 100);
 
@@ -1206,6 +1272,9 @@ function relBase(k){
   // 큰 나라는 약한 이웃을 낮추어 본다
   const 힘 = G.nations.kor.army/Math.max(1,G.nations[k].army);
   b += clamp((힘-1)*12, -10, 12);
+  // 조선이 커질수록 이웃은 경계한다. 남의 땅을 쥐고 있으면 더욱.
+  b -= clamp((natProvs('kor').length-16)*1.6, 0, 40);
+  b -= occupied('kor').filter(p=>p.home===k).length*9;   // 제 땅을 쥐고 있으면 원수다
   return clamp(b, -100, 100);
 }
 function dipTurn(B){
@@ -1270,7 +1339,10 @@ function aiTurn(B){
     // 이웃도 논다. 가만히 두면 조선만 홀로 앞서 나가 견줄 것이 없어진다.
     N.tech = +(N.tech + 0.3 + 0.6*(내땅.length/14) + G.era*0.42).toFixed(1);
     내땅.forEach(p=>{
-      if(Math.random()<0.25){ p.dev=Math.min(devCap(),p.dev+1); p.army+=ri(60,240); }
+      // 수비병은 이제 모든 나라가 인구에서 스스로 채운다(garrisonTarget).
+      // 여기서는 그 위로 밀어 올리는 '움직이는 군사'만 기른다.
+      if(Math.random()<0.25){ p.dev=Math.min(devCap(),p.dev+1);
+        p.army=Math.min(Math.round(garrisonTarget(p)*1.7), p.army+ri(60,240)); }
       if(Math.random()<0.30) p.farm =Math.min(devCap(), p.farm +1);
       if(Math.random()<0.24) p.trade=Math.min(devCap(), p.trade+1);
       if(Math.random()<0.06 && p.fort<4+Math.floor(G.era*0.9)) p.fort++;
@@ -1289,13 +1361,24 @@ function aiTurn(B){
           // 동맹이거나 휴전 중이면 조선을 건드리지 않는다
           if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
           const T=TERR[q.t];
-          let 방어=q.army*T.def*(1+q.fort*0.16)*(1+techOf(q.nat)/220);
+          // 지키는 쪽도 이웃한 제 나라 고을에서 원군을 받는다 (셈이 양쪽에 같다)
+          let 원군=0;
+          [...q.adj].forEach(id2=>{ const r=G.provs[id2];
+            if(r && r!==p && r.nat===q.nat) 원군 += r.army*0.30; });
+          let 방어=(q.army+원군)*T.def*(1+q.fort*0.16)*(1+techOf(q.nat)/220);
           if(q.nat==='kor') 방어*=M.defKor*unitOf(q).def;      // 의병·부국강병·병종
-          const 공격=p.army*(1+techOf(k)/220)*(q.nat==='kor'?1:1);
+          let 응원=0;
+          [...p.adj].forEach(id2=>{ const r=G.provs[id2];
+            if(r && r!==q && r.nat===k) 응원 += r.army*0.20; });
+          const 공격=(p.army+응원)*(1+techOf(k)/220);
           // 사대교린과 세폐는 큰 나라의 발길을 늦춘다
           const 눈치 = (q.nat==='kor')? M.invRisk : 1;
           // 사이가 나쁠수록 조선을 먼저 문다. 좋으면 다른 데를 본다.
-          const 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
+          let 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
+          // 빼앗긴 제 땅은 기어이 되찾으려 한다
+          if(q.home===k && q.nat!==k) 미움 += 0.9;
+          // 조선이 커지면 이웃이 함께 경계한다
+          if(q.nat==='kor') 미움 += clamp((natProvs('kor').length-16)*0.035, 0, 0.9);
           const s=(공격/Math.max(1,방어) + (q.unrest/100) + 미움)*눈치;
           if(공격>방어*1.25 && s>bs && s>0){ bs=s; best=[p,q]; }
         });
@@ -1304,7 +1387,7 @@ function aiTurn(B){
         const [from,q]=best;
         const old=q.nat;
         if(old==='kor' && d && !d.war) declareWar(k, false);
-        q.nat=k; q.unrest=clamp(q.unrest+40,0,100);
+        q.nat=k; q.unrest=clamp(q.unrest+40,0,100); q.assim=0;
         q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
         G.plateDirty=true;
         log(natName(k)+'이(가) '+q.nm+'을(를) 차지했다.');
@@ -1334,7 +1417,7 @@ function allyStrike(friend, foe, B){
   });
   if(!best) return;
   const [from,q]=best;
-  q.nat=friend; q.unrest=clamp(q.unrest+35,0,100);
+  q.nat=friend; q.unrest=clamp(q.unrest+35,0,100); q.assim=0;
   q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
   G.plateDirty=true;
   log(natName(friend)+'이(가) 약조대로 '+natName(foe)+'의 '+q.nm+'을(를) 쳤다.');
@@ -1408,8 +1491,8 @@ const ACTIONS=[
   { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
     desc:p=>'성곽 '+p.fort+' → '+(p.fort+1)+'. 방어 +16%, 해마다 유지가 는다.',
     run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true; log(p.nm+'의 성을 쌓았다.'); } },
-  { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.05,
-    desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 5%까지만. 군량을 먹는다.',
+  { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.03,
+    desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 3%까지만. 군량을 먹는다.',
     run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/mods().popMo));
       p.unrest=clamp(p.unrest+3,0,100);
       log(p.nm+'에서 군사를 모았다.'); } },
@@ -1428,6 +1511,7 @@ const ACTIONS=[
       const d=dipOf(p.nat);
       return o.from.nm+'의 '+o.U.nm+'로 친다.  이길 낌새 '+Math.round(o.p*100)+'%'
         + '  ('+num(Math.round(o.atk))+' 대 '+num(Math.round(o.def))+')'
+        + (o.원군>1? '  · 이웃 고을이 원군 '+num(Math.round(o.원군))+'을 보낸다' : '')
         + (o.육로? '' : '  · 바닷길')
         + (d && !d.war? '  ·  '+natName(p.nat)+'과(와) 전쟁이 열린다' : ''); },
     run:p=>{ invade(p); } }
@@ -1494,13 +1578,28 @@ function warPower(from, target){
   const 육로=[...from.adj].includes(target.id) && !SEA_LINK[from.id+'|'+target.id];
   const 배 = 육로? 1 : tagVal(from,'navy',0.75)*M.navy;
   const U=unitOf(from), V=unitOf(target);
-  const atk=from.army*mil*(1+tagVal(from,'atk',0))*배*U.atk*M.atk
+  /* 치는 쪽도 이웃 고을에서 군사를 끌어 온다. 다만 지키는 쪽보다 적다 —
+     오는 데 시간이 걸리고, 제 고을도 비워 둘 수 없다. */
+  let 응원=0;
+  [...from.adj].forEach(id=>{
+    const q=G.provs[id];
+    if(q && q!==target && q.nat==='kor') 응원 += q.army*0.20;
+  });
+  const atk=(from.army+응원)*mil*(1+tagVal(from,'atk',0))*배*U.atk*M.atk
             *(1+techOf('kor')/220);
   const T=TERR[target.t];
-  const def=target.army*T.def*(1+target.fort*0.14)*V.def
+  /* 원군 — 큰 나라의 고을은 혼자 서 있지 않다.
+     이웃한 제 나라 고을이 군사를 보낸다. 예전에는 이것이 없어서, 큰 나라를
+     한 고을씩 떼어 먹는 동안 나머지 고을이 구경만 했다. */
+  let 원군=0;
+  [...target.adj].forEach(id=>{
+    const q=G.provs[id];
+    if(q && q!==from && q.nat===target.nat) 원군 += q.army*0.30;
+  });
+  const def=(target.army+원군)*T.def*(1+target.fort*0.14)*V.def
             *(target.nat==='kor'? M.defKor : 1)
             *(1+techOf(target.nat)/220);
-  return { atk, def, 육로, U, V };
+  return { atk, def, 육로, U, V, 원군 };
 }
 function warOdds(target){
   const from=invadeFrom(target);
@@ -1520,13 +1619,17 @@ function invade(target){
   if(DIP_NATS.includes(임자)) declareWar(임자, true);
   const w=warPower(from,target);
   const atk=w.atk*rnd(0.85,1.15), def=w.def*rnd(0.9,1.1);
+  // 이웃에서 끌어 온 군사도 피를 흘린다 — 이겨도 주변이 함께 얇아진다
+  [...from.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q!==target && q.nat==='kor') q.army=Math.round(q.army*0.93); });
   const lossA=Math.round(from.army*clamp(def/(atk+def),0.15,0.7));
   const lossD=Math.round(target.army*clamp(atk/(atk+def),0.2,0.85));
   from.army=Math.max(0,from.army-lossA);
   target.army=Math.max(0,target.army-lossD);
   if(atk>def){
     const old=natName(임자);
-    target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100); G.plateDirty=true;
+    target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100); target.assim=0;
+    G.plateDirty=true;
     target.army=Math.round(from.army*0.25); from.army=Math.round(from.army*0.75);
     log(from.nm+'의 '+w.U.nm+'이(가) '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
@@ -2267,7 +2370,10 @@ function drawMap(g){
         g.strokeRect(cx-labelWidth/2,cy-labelSize*1.15,labelWidth,labelSize*1.55);
       }
       g.lineWidth=2.3*inv; g.strokeStyle='rgba(7,12,13,.84)'; g.strokeText(label,cx,cy);
-      g.fillStyle=P.id===G.sel?'#fff1bc':'#eee4cd'; g.fillText(label,cx,cy);
+      g.fillStyle = P.id===G.sel? '#fff1bc'
+                  : (P.nat==='kor' && !isCore(P))? '#d8b36a'   // 점령지는 눈에 띄게
+                  : '#eee4cd';
+      g.fillText(label,cx,cy);
     }
     if(P.cap){ const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
       g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1*inv; g.beginPath();
@@ -2350,8 +2456,10 @@ function sideState(g,x,y,w){
   g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
   g.fillText(ERAS[G.era].desc, x, y+30);
   let yy=y+52;
+  const 점령=occupied('kor').length, 한도=holdAllowance();
   const rows=[
-    ['고을', natProvs('kor').length+' 곳'],
+    ['고을', natProvs('kor').length+' 곳'
+      + (점령? '  (본토 '+(natProvs('kor').length-점령)+' · 점령지 '+점령+'/'+한도+')' : '')],
     ['인구', num(N.pop)],
     ['군사', num(N.army)],
     ['기술', num(N.tech)],
@@ -2730,6 +2838,21 @@ function drawBottom(g){
       }
       nx+=bw3+6;
     }
+    // 빼앗은 땅인가 — 표로 달아 둔다. 세가 반쯤만 걷히고 어지러움이 절로 오른다.
+    if(P.nat==='kor' && !isCore(P)){
+      const 남=Math.max(0, ASSIM_YEARS-Math.floor(P.assim||0));
+      const t='점령지 '+남+'해';
+      g.font='12px serif';
+      const bw4=g.measureText(t).width+14;
+      g.fillStyle='rgba(201,162,74,.20)'; g.fillRect(nx, y+14, bw4, 18);
+      g.strokeStyle='rgba(201,162,74,.7)'; g.lineWidth=1; g.strokeRect(nx+.5, y+14.5, bw4-1, 17);
+      g.fillStyle='#c9a24a'; g.fillText(t, nx+7, y+27);
+      if(inRect(Mouse,{x:nx,y:y+14,w:bw4,h:18}))
+        G.tip='본디 '+natName(P.home)+'의 땅이다. 세와 곡식이 절반만 걷히고 어지러움이 해마다 절로 오른다. '
+            + '수령을 두고 어지러움을 40 아래로 눌러 두면 한 해에 한 살씩 편입이 진행되어 '+ASSIM_YEARS+'해 뒤 본토가 된다. '
+            + '어지러움이 오래 높으면 제 나라로 돌아선다.';
+      nx+=bw4+6;
+    }
     if(TG){
       g.font='12px serif';
       const bw2=g.measureText(TG.nm).width+14;
@@ -2821,7 +2944,7 @@ function drawReport(g){
   g.fillStyle='rgba(4,5,8,.74)'; g.fillRect(0,0,CFG.W,CFG.H);
   /* 창 높이는 담을 것에 맞춘다 — 빈 판을 크게 띄워 둘 까닭이 없다 */
   const evN=Math.min(4, B.events.length);
-  const h = 286 + (B.dip&&B.dip.length? 25:0)
+  const h = 286 + (B.dip&&B.dip.length? 25:0) + (B.over? 25:0)
           + (B.events.length? 31+evN*16+(B.events.length>4?14:0) : 0) + 66;
   const w=600, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   bigPanel(g,x,y,w,h);
@@ -2857,6 +2980,10 @@ function drawReport(g){
       N.stab<35?'#c4534a':'#8fa86a',
       '수령 '+natProvs('kor').filter(p=>officialAt(p.id)).length+'/'+natProvs('kor').length
       +' · 어지러움 '+Math.round(natProvs('kor').reduce((a,p)=>a+p.unrest,0)/Math.max(1,natProvs('kor').length)));
+  if(B.over){
+    row('과대팽창', '−'+(B.over*1.2).toFixed(1)+' 민심', '#c4534a',
+        '지고 갈 수 있는 것보다 점령지가 '+B.over+' 많다');
+  }
   row('정통', Math.round(G.legit)+'  ('+((G.legit-(B.legit0!=null?B.legit0:G.legit))>=0?'+':'')
       +(G.legit-(B.legit0!=null?B.legit0:G.legit)).toFixed(1)+')',
       G.legit<35?'#c4534a':'#b79fe0');
@@ -3017,7 +3144,8 @@ function packSave(){
     res:G.res, dip:G.dip, byeol:G.byeol, tab:G.tab, sel:G.sel, view:G.view,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
-    farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0}; });
+    farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0,
+    home:P.home,assim:P.assim||0}; });
   // 칸 목록에 보여줄 요약
   d.sum={ y:G.year, era:ERAS[G.era].nm, prov:natProvs('kor').length,
           pop:G.nations.kor.pop, gold:G.nations.kor.gold, ended:!!G.ended };

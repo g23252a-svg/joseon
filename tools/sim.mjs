@@ -429,6 +429,49 @@ const PLANS = {
       }
     }
   },
+  /* 정복만 노린다 — 이길 만한 곳이 있으면 치고, 없으면 모병한다.
+     "얼마나 빨리 다 먹을 수 있나"를 재기 위한 두는 법이다. */
+  conquer: {
+    nm: '정복',
+    play(api){
+      const G = api.get('G'), N = G.nations.kor;
+      api.call('autoAssign');
+      const ACTIONS = api.get('ACTIONS');
+      const gong = ACTIONS.find(a => a.id === 'gong');
+      const mo   = ACTIONS.find(a => a.id === 'mo');
+      const jin  = ACTIONS.find(a => a.id === 'jin');
+      let guard = 0;
+      while((N.adm || 0) > 0 && guard++ < 30){
+        /* 너무 어지러운 고을은 먼저 달랜다 — 반란으로 잃으면 손해다 */
+        const hot = api.call('natProvs','kor').filter(p => p.unrest > 70).sort((a,b)=>b.unrest-a.unrest)[0];
+        if(hot && (N.adm||0) >= jin.adm && jin.need(hot)){
+          const c = api.call('actCost', jin, hot);
+          if(N.gold >= c && N.food > hot.pop/240){
+            N.gold -= c; N.adm -= jin.adm; jin.run(hot); api.call('recalc'); continue;
+          }
+        }
+        /* 이길 낌새가 좋은 곳을 친다 */
+        let best = null, bp = 0;
+        Object.values(G.provs).forEach(p => {
+          if(!gong.need(p)) return;
+          const o = api.call('warOdds', p);
+          if(o && o.p > bp){ bp = o.p; best = p; }
+        });
+        if(best && bp > 0.62 && (N.adm||0) >= gong.adm){
+          const c = api.call('actCost', gong, best);
+          if(N.gold >= c){
+            N.gold -= c; N.adm -= gong.adm; gong.run(best); api.call('recalc'); continue;
+          }
+        }
+        /* 못 이길 것 같으면 군사를 불린다 */
+        const mine = api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop);
+        if(!mine.length || (N.adm||0) < mo.adm) break;
+        const p = mine[0], c = api.call('actCost', mo, p);
+        if(N.gold < c * 1.2) break;
+        N.gold -= c; N.adm -= mo.adm; mo.run(p); api.call('recalc');
+      }
+    }
+  },
   /* 외교만 챙긴다 — 이웃을 달래는 것만으로 얼마나 버티는지 */
   envoy: {
     nm: '외교만',
@@ -476,6 +519,8 @@ function runOne(planKey, seed){
   const trace = [];
 
   let year = G.year, guard = 0;
+  /* 언제 얼마나 먹었는지 — 정복이 너무 쉬운지 재는 눈금 */
+  let peak = 0, y30 = null, yAll = null;
   while(!G.ended && G.year < 2025 && guard++ < 900){
     try { plan.play(api); }
     catch(e){ return { err: '두는 중 오류: ' + e.message + '\n' + e.stack, year: G.year }; }
@@ -493,6 +538,11 @@ function runOne(planKey, seed){
     }
     if(G.popup && G.popup.kind !== 'end') G.popup = null;
 
+    const np = api.call('natProvs','kor').length;
+    if(np > peak) peak = np;
+    if(y30 === null && np >= 30) y30 = G.year;
+    if(yAll === null && np >= Object.keys(G.provs).length) yAll = G.year;
+
     if(TRACE && G.year % 25 === 0){
       const N = G.nations.kor;
       trace.push(`${G.year}  고을 ${api.call('natProvs','kor').length}  국고 ${Math.round(N.gold)}` +
@@ -505,7 +555,7 @@ function runOne(planKey, seed){
   const N = G.nations.kor;
   const total = G.scores.reduce((a, s) => a + s.pt, 0);
   return {
-    year, total,
+    year, total, peak, y30, yAll,
     scores: G.scores.map(s => `${s.era} ${s.pt}(${s.등급})`),
     prov: api.call('natProvs','kor').length,
     ended: !!G.ended,
@@ -542,25 +592,30 @@ for(const k of keys){
       console.log(`${PLANS[k].nm.padEnd(8)} 씨앗 ${String(seed).padEnd(6)} → ` +
         `${String(r.year).padStart(4)}년 ${r.how.padEnd(10)} ` +
         `합계 ${String(r.total).padStart(5)}점  고을 ${String(r.prov).padStart(2)}  ` +
-        `민심 ${String(r.stab).padStart(3)}  기술 ${String(r.tech).padStart(4)}`);
+        `최대 ${String(r.peak).padStart(2)}  ` +
+        `30고을 ${String(r.y30 ?? '—').padStart(4)}  전부 ${String(r.yAll ?? '—').padStart(4)}`);
       if(TRACE) r.trace.forEach(t => console.log('    ' + t));
     }
   }
   if(rows.length){
     const avg = a => Math.round(rows.reduce((s, r) => s + a(r), 0) / rows.length);
+    const got30 = rows.filter(r => r.y30 != null);
     summary.push({
       nm: PLANS[k].nm,
       year: avg(r => r.year), total: avg(r => r.total), prov: avg(r => r.prov),
+      peak: avg(r => r.peak),
+      y30: got30.length ? Math.round(got30.reduce((s,r)=>s+r.y30,0)/got30.length) + '년' : '—',
       done: rows.filter(r => r.year >= 2025).length + '/' + rows.length
     });
   }
 }
 
 console.log('\n── 요약 ──');
-console.log('두는 법        평균 끝난 해   평균 점수   평균 고을   완주');
+console.log('두는 법        평균 끝난 해   평균 점수   평균 고을   최대 고을   30고을   완주');
 summary.forEach(s => {
   console.log(`${s.nm.padEnd(12)} ${String(s.year).padStart(8)} ${String(s.total).padStart(11)} ` +
-              `${String(s.prov).padStart(11)} ${s.done.padStart(8)}`);
+              `${String(s.prov).padStart(11)} ${String(s.peak).padStart(11)} ` +
+              `${String(s.y30).padStart(8)} ${s.done.padStart(7)}`);
 });
 
 if(bad){ console.error(`\n${bad}판이 터졌다.`); process.exit(1); }
