@@ -23,7 +23,7 @@
    ========================================================================= */
 const VERSION = '0.1.0';
 
-const CFG = { W:1280, H:720, CELL:22, GX:8, GY:62, GW:44, GH:26, SAVE:'donga_save_v1' };
+const CFG = { W:1280, H:720, CELL:12, GX:8, GY:62, GW:74, GH:40, SAVE:'donga_save_v2' };
 
 /* ---------------------------------------------------------------- 유틸 */
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -108,7 +108,8 @@ function eraOf(y){ let e=0; ERAS.forEach((E,i)=>{ if(y>=E.y) e=i; }); return e; 
 const NATIONS={
   kor:{ nm:'조선', col:'#4f7fb5', col2:'#2f5a86', names:['조선','조선','대한제국','대한제국','조선총독부','대한민국','대한민국','대한민국'] },
   chn:{ nm:'명',   col:'#b5654f', col2:'#8a4436', names:['명','명','청','청','청','중화민국','중화인민공화국','중화인민공화국'] },
-  jpn:{ nm:'일본', col:'#8a6fae', col2:'#66518a', names:['무로마치','도요토미','에도','메이지','일본제국','일본','일본','일본'] }
+  jpn:{ nm:'일본', col:'#8a6fae', col2:'#66518a', names:['무로마치','도요토미','에도','메이지','일본제국','일본','일본','일본'] },
+  ind:{ nm:'독립',  col:'#6f8a72', col2:'#51684f', names:['유구','유구','유구','유구','유구','유구','유구','유구'] }
 };
 function natName(k){ const n=NATIONS[k]; return n.names[Math.min(n.names.length-1,G.era)]; }
 
@@ -117,41 +118,106 @@ const TERR={
   plain:{ nm:'평야', food:1.35, trade:1.00, def:1.00, col:'#5d6b45' },
   hill: { nm:'구릉', food:0.95, trade:1.05, def:1.25, col:'#6a6247' },
   mtn:  { nm:'산지', food:0.60, trade:0.85, def:1.55, col:'#585349' },
-  coast:{ nm:'연안', food:1.05, trade:1.35, def:0.95, col:'#4f6459' }
+  coast:{ nm:'연안', food:1.05, trade:1.35, def:0.95, col:'#4f6459' },
+  river:{ nm:'강가', food:1.25, trade:1.30, def:0.90, col:'#546b52' }
 };
 
-/* 지방 — cells 는 사각 구역 목록 [x,y,w,h] */
+/* ================================================================
+   땅
+   ----------------------------------------------------------------
+   네모로 칠하면 한반도도 열도도 되지 않는다. 그래서
+     (1) 해안선을 다각형으로 먼저 긋고
+     (2) 지방마다 씨앗을 하나 놓은 뒤
+     (3) 바다를 건너지 않는 물결 퍼짐으로 땅을 나눈다.
+   경계가 저절로 들쭉날쭉해지고, 섬은 섬끼리만 이어진다.
+
+   중요한 것은 '사이의 바다'다.
+   황해가 없으면 조선은 중국에 붙은 혹이 되고, 현해탄이 없으면 일본이 아니다.
+   ================================================================ */
+const LAND=[
+  /* 북방 — 몽골에서 만주까지. 조선은 여기에만 붙는다 */
+  { nm:'북방', pts:[[6,2],[20,0],[34,0],[46,1],[54,3],[58,6],[57,10],[50,11],[42,10],[32,8],[20,6],[9,4]] },
+  /* 중원 — 동쪽 해안이 안으로 들어와 황해를 만든다 */
+  { nm:'중원', pts:[[2,9],[9,6],[17,5],[25,6],[32,8],[37,11],[39,14],
+                    [36,16],[38,18],[41,21],[43,25],[41,29],[38,33],
+                    [33,36],[26,38],[18,38],[11,35],[5,29],[2,20]] },
+  /* 산동 반도 — 황해로 튀어나온다 */
+  { nm:'산동', pts:[[37,14],[44,14],[45,16],[43,17],[38,17]] },
+  /* 한반도 — 위로만 붙고 아래로 길게 내려간다 */
+  { nm:'한반도', pts:[[51,10],[56,9],[58,12],[58,15],[57,18],[55,21],
+                      [53,24],[51,26],[49,23],[49,18],[49,14],[50,11]] },
+  /* 제주 */
+  { nm:'제주', pts:[[50,28],[53,28],[53,29],[50,29]] },
+  /* 대마도 — 현해탄 한가운데 */
+  { nm:'대마도', pts:[[55,27],[56,27],[56,28],[55,28]] },
+  /* 일본 — 남서에서 북동으로 휜 활 */
+  { nm:'규슈', pts:[[59,29],[63,28],[65,31],[64,34],[61,35],[58,33]] },
+  { nm:'시코쿠', pts:[[64,27],[68,27],[68,29],[64,29]] },
+  { nm:'혼슈', pts:[[59,27],[63,25],[67,22],[70,18],[72,14],[73,10],
+                    [72,7],[69,8],[66,12],[63,16],[61,20],[58,24],[57,26]] },
+  { nm:'홋카이도', pts:[[69,2],[73,1],[73,6],[70,7],[68,5]] },
+  /* 남쪽 */
+  { nm:'타이완', pts:[[45,32],[47,32],[48,35],[46,36],[44,34]] },
+  { nm:'유구1', pts:[[55,33],[57,33],[57,34],[55,34]] },
+  { nm:'유구2', pts:[[51,35],[53,35],[53,36],[51,36]] }
+];
+function inPoly(x,y,pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const [xi,yi]=pts[i], [xj,yj]=pts[j];
+    if((yi>y)!==(yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) inside=!inside;
+  }
+  return inside;
+}
+
+/* 지방 — 씨앗 한 점과 성격만 적는다. 땅은 알아서 나뉜다. */
 const PROVDEF=[
- /* 조선 */
- {id:'ham',nm:'함경',nat:'kor',t:'mtn',  cells:[[22,3,5,2],[24,5,3,2]]},
- {id:'pya',nm:'평안',nat:'kor',t:'hill', cells:[[18,5,4,3],[19,8,3,1]]},
- {id:'hwa',nm:'황해',nat:'kor',t:'plain',cells:[[18,9,4,2]]},
- {id:'gyu',nm:'경기',nat:'kor',t:'plain',cells:[[20,11,3,2]],cap:true},
- {id:'gan',nm:'강원',nat:'kor',t:'mtn',  cells:[[23,7,3,4]]},
- {id:'chu',nm:'충청',nat:'kor',t:'plain',cells:[[19,13,4,2]]},
- {id:'gyb',nm:'경상',nat:'kor',t:'hill', cells:[[22,13,4,4]]},
- {id:'jeo',nm:'전라',nat:'kor',t:'plain',cells:[[18,15,4,3]]},
- /* 중국 */
- {id:'man',nm:'만주',nat:'chn',t:'plain',cells:[[10,1,10,4]]},
- {id:'lia',nm:'요동',nat:'chn',t:'plain',cells:[[14,5,4,3]]},
- {id:'heb',nm:'하북',nat:'chn',t:'plain',cells:[[8,6,6,4]],cap:true},
- {id:'sha',nm:'산동',nat:'chn',t:'coast',cells:[[13,9,5,3]]},
- {id:'sxi',nm:'섬서',nat:'chn',t:'mtn',  cells:[[2,6,6,5]]},
- {id:'sch',nm:'사천',nat:'chn',t:'mtn',  cells:[[1,11,7,6]]},
- {id:'jia',nm:'강남',nat:'chn',t:'plain',cells:[[8,12,7,5]]},
- {id:'fuj',nm:'복건',nat:'chn',t:'coast',cells:[[13,17,4,3]]},
- {id:'gua',nm:'광동',nat:'chn',t:'coast',cells:[[7,18,6,4]]},
- /* 일본 */
- {id:'kyu',nm:'규슈',nat:'jpn',t:'hill', cells:[[27,18,3,3]]},
- {id:'shi',nm:'시코쿠',nat:'jpn',t:'hill',cells:[[30,17,3,2]]},
- {id:'chg',nm:'주고쿠',nat:'jpn',t:'hill',cells:[[29,14,4,3]]},
- {id:'kan',nm:'간사이',nat:'jpn',t:'plain',cells:[[33,13,3,3]],cap:true},
- {id:'kto',nm:'간토',nat:'jpn',t:'plain',cells:[[35,10,4,3]]},
- {id:'toh',nm:'도호쿠',nat:'jpn',t:'mtn', cells:[[37,6,4,4]]},
- {id:'hok',nm:'홋카이도',nat:'jpn',t:'mtn',cells:[[38,2,5,4]]},
- /* 사이 */
- {id:'tsu',nm:'대마도',nat:'jpn',t:'coast',cells:[[25,17,1,1]]},
- {id:'ryu',nm:'유구',nat:'jpn',t:'coast',cells:[[23,21,2,1]]}
+ /* 조선 16 */
+ {id:'hamb',nm:'함경북도',nat:'kor',t:'mtn',  tag:'변방', seed:[56,11]},
+ {id:'hamn',nm:'함경남도',nat:'kor',t:'mtn',  tag:'변방', seed:[55,14]},
+ {id:'pyab',nm:'평안북도',nat:'kor',t:'hill', tag:'국경', seed:[50,12]},
+ {id:'pyan',nm:'평안남도',nat:'kor',t:'plain',tag:'평양', seed:[51,15]},
+ {id:'hwan',nm:'황해도',  nat:'kor',t:'plain',tag:'곡창', seed:[50,18]},
+ {id:'gaes',nm:'개성',    nat:'kor',t:'river',tag:'상업', seed:[52,17]},
+ {id:'hans',nm:'한성',    nat:'kor',t:'river',tag:'도읍', seed:[52,19],cap:true},
+ {id:'gyeo',nm:'경기도',  nat:'kor',t:'plain',tag:'기전', seed:[51,20]},
+ {id:'gang',nm:'강원도',  nat:'kor',t:'mtn',  tag:'산림', seed:[56,17]},
+ {id:'chub',nm:'충청북도',nat:'kor',t:'hill', tag:'내륙', seed:[54,21]},
+ {id:'chun',nm:'충청남도',nat:'kor',t:'plain',tag:'곡창', seed:[50,21]},
+ {id:'gyeb',nm:'경상북도',nat:'kor',t:'mtn',  tag:'철',   seed:[56,20]},
+ {id:'ando',nm:'안동',    nat:'kor',t:'hill', tag:'학문', seed:[55,22]},
+ {id:'gyen',nm:'경상남도',nat:'kor',t:'coast',tag:'수군', seed:[54,24]},
+ {id:'jeon',nm:'전라도',  nat:'kor',t:'plain',tag:'곡창', seed:[51,24]},
+ {id:'jeju',nm:'제주',    nat:'kor',t:'coast',tag:'목마', seed:[51,28]},
+ /* 중국 14 */
+ {id:'mong',nm:'몽골',    nat:'chn',t:'plain',tag:'유목', seed:[20,3]},
+ {id:'manj',nm:'만주',    nat:'chn',t:'plain',tag:'변방', seed:[45,5]},
+ {id:'liao',nm:'요동',    nat:'chn',t:'plain',tag:'국경', seed:[50,9]},
+ {id:'hebe',nm:'하북',    nat:'chn',t:'plain',tag:'도읍', seed:[34,12],cap:true},
+ {id:'shan',nm:'산동',    nat:'chn',t:'coast',tag:'어업', seed:[42,15]},
+ {id:'shax',nm:'산서',    nat:'chn',t:'mtn',  tag:'석탄', seed:[28,11]},
+ {id:'shaa',nm:'섬서',    nat:'chn',t:'mtn',  tag:'옛도읍',seed:[20,12]},
+ {id:'hena',nm:'하남',    nat:'chn',t:'plain',tag:'중원', seed:[30,17]},
+ {id:'sich',nm:'사천',    nat:'chn',t:'mtn',  tag:'분지', seed:[12,20]},
+ {id:'hube',nm:'호북',    nat:'chn',t:'river',tag:'수운', seed:[26,22]},
+ {id:'jian',nm:'강소',    nat:'chn',t:'river',tag:'비단', seed:[38,22]},
+ {id:'zhej',nm:'절강',    nat:'chn',t:'coast',tag:'도자기',seed:[39,26]},
+ {id:'fuji',nm:'복건',    nat:'chn',t:'coast',tag:'해상', seed:[36,30]},
+ {id:'guan',nm:'광동',    nat:'chn',t:'coast',tag:'교역', seed:[27,34]},
+ /* 일본 9 */
+ {id:'hokk',nm:'홋카이도',nat:'jpn',t:'mtn',  tag:'변방', seed:[71,4]},
+ {id:'toho',nm:'도호쿠',  nat:'jpn',t:'mtn',  tag:'북국', seed:[71,10]},
+ {id:'kant',nm:'간토',    nat:'jpn',t:'plain',tag:'평야', seed:[68,16]},
+ {id:'chubu',nm:'주부',   nat:'jpn',t:'mtn',  tag:'산악', seed:[64,21]},
+ {id:'kans',nm:'간사이',  nat:'jpn',t:'plain',tag:'도읍', seed:[61,25],cap:true},
+ {id:'chug',nm:'주고쿠',  nat:'jpn',t:'hill', tag:'철',   seed:[59,27]},
+ {id:'shik',nm:'시코쿠',  nat:'jpn',t:'hill', tag:'해적', seed:[66,28]},
+ {id:'kyus',nm:'규슈',    nat:'jpn',t:'coast',tag:'교역', seed:[61,31]},
+ {id:'sats',nm:'사쓰마',  nat:'jpn',t:'coast',tag:'무예', seed:[60,34]},
+ /* 사이 3 */
+ {id:'tsus',nm:'대마도',  nat:'jpn',t:'coast',tag:'중계', seed:[55,27]},
+ {id:'ryuk',nm:'유구',    nat:'ind',t:'coast',tag:'중계', seed:[56,33]},
+ {id:'taiw',nm:'타이완',  nat:'ind',t:'coast',tag:'변방', seed:[46,34]}
 ];
 
 /* 정책 — 시대별 해금 */
@@ -194,29 +260,60 @@ function newGame(){
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], warTarget:null, popup:null, ver:VERSION };
 
-  /* 격자에 지방을 칠한다 */
-  for(let y=0;y<CFG.GH;y++){ G.grid.push(new Array(CFG.GW).fill(null)); }
+  /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
+  G.land=[];
+  for(let y=0;y<CFG.GH;y++){
+    G.land.push(new Array(CFG.GW).fill(false));
+    G.grid.push(new Array(CFG.GW).fill(null));
+  }
+  for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++){
+    for(const L of LAND){ if(inPoly(x+0.5,y+0.5,L.pts)){ G.land[y][x]=true; break; } }
+  }
+  /* 2) 지방을 만들고 씨앗을 심는다 */
   PROVDEF.forEach(p=>{
-    const P={ id:p.id, nm:p.nm, nat:p.nat, t:p.t, cap:!!p.cap,
-      pop: 0, dev:0, farm:0, trade:0, fort:0, unrest:0, gov:null, army:0, cells:[] };
-    p.cells.forEach(([x,y,w,h])=>{
-      for(let j=0;j<h;j++) for(let i=0;i<w;i++){
-        const cx=x+i, cy=y+j;
-        if(cx<0||cy<0||cx>=CFG.GW||cy>=CFG.GH) continue;
-        G.grid[cy][cx]=p.id; P.cells.push([cx,cy]);
-      }
-    });
-    // 초기 수치 — 지형과 위치로 대충 나눈다
-    const T=TERR[p.t];
-    P.pop  = Math.round(P.cells.length*(70000+hash2(P.cells.length,p.id.length)*50000)*T.food);
-    P.dev  = ri(8,18);
-    P.farm = ri(10,22);
-    P.trade= ri(6,16);
-    P.fort = p.cap? ri(3,4) : ri(0,2);
-    P.army = p.cap? ri(4000,7000) : ri(800,3000);
-    G.provs[p.id]=P;
+    G.provs[p.id]={ id:p.id, nm:p.nm, nat:p.nat, t:p.t, tag:p.tag, cap:!!p.cap,
+      pop:0, dev:0, farm:0, trade:0, fort:0, unrest:0, army:0, cells:[], seed:p.seed };
   });
-  /* 인접 계산 */
+  /* 3) 바다를 건너지 않는 물결 퍼짐으로 땅을 나눈다 */
+  const q=[];
+  PROVDEF.forEach(p=>{
+    let [sx,sy]=p.seed;
+    if(!G.land[sy] || !G.land[sy][sx]){          // 씨앗이 바다에 떨어졌으면 가장 가까운 땅으로 옮긴다
+      let best=null,bd=1e9;
+      for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++){
+        if(!G.land[y][x]||G.grid[y][x]) continue;
+        const d=(x-sx)*(x-sx)+(y-sy)*(y-sy);
+        if(d<bd){ bd=d; best=[x,y]; }
+      }
+      if(best){ sx=best[0]; sy=best[1]; }
+    }
+    if(G.land[sy] && G.land[sy][sx] && !G.grid[sy][sx]){
+      G.grid[sy][sx]=p.id; q.push([sx,sy,p.id]);
+    }
+  });
+  for(let h=0; h<q.length; h++){
+    const [x,y,id]=q[h];
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
+      const nx=x+dx, ny=y+dy;
+      if(nx<0||ny<0||nx>=CFG.GW||ny>=CFG.GH) return;
+      if(!G.land[ny][nx] || G.grid[ny][nx]) return;
+      G.grid[ny][nx]=id; q.push([nx,ny,id]);
+    });
+  }
+  for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++){
+    const id=G.grid[y][x]; if(id) G.provs[id].cells.push([x,y]);
+  }
+  /* 4) 땅 넓이에 맞춰 초기 수치 */
+  Object.values(G.provs).forEach(P=>{
+    const T=TERR[P.t], n=Math.max(1,P.cells.length);
+    P.pop  = Math.round(n*(46000+hash2(n,P.id.length)*26000)*T.food);
+    P.dev  = ri(8,18);
+    P.farm = ri(10,22) + (P.tag==='곡창'?6:0);
+    P.trade= ri(6,16)  + (P.tag==='상업'||P.tag==='교역'||P.tag==='중계'?7:0);
+    P.fort = P.cap? ri(3,4) : ri(0,2);
+    P.army = P.cap? ri(4000,7000) : ri(800,3000);
+  });
+  /* 5) 인접 — 땅으로 붙은 곳 */
   Object.values(G.provs).forEach(P=>{ P.adj=new Set(); });
   for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++){
     const a=G.grid[y][x]; if(!a) continue;
@@ -224,12 +321,25 @@ function newGame(){
       const nx=x+dx, ny=y+dy;
       if(nx<0||ny<0||nx>=CFG.GW||ny>=CFG.GH) return;
       const b=G.grid[ny][nx];
-      if(b && b!==a){ G.provs[a].adj.add(b); }
+      if(b && b!==a) G.provs[a].adj.add(b);
     });
   }
-  /* 바다 건너 인접 (해협) */
-  const strait=[['gyb','tsu'],['tsu','kyu'],['jeo','ryu'],['sha','hwa'],['fuj','ryu'],['gua','ryu']];
-  strait.forEach(([a,b])=>{ if(G.provs[a]&&G.provs[b]){ G.provs[a].adj.add(b); G.provs[b].adj.add(a); } });
+  /* 6) 뱃길 — 좁은 바다는 건너다닌다 */
+  const sea=[['gyen','tsus'],['tsus','kyus'],['jeon','jeju'],['jeju','tsus'],
+             ['shan','hwan'],['shan','liao'],['zhej','ryuk'],['fuji','taiw'],
+             ['ryuk','sats'],['ryuk','taiw'],['kyus','chug'],['shik','kans'],
+             ['gyen','kyus'],['guan','taiw']];
+  sea.forEach(([a,b])=>{ if(G.provs[a]&&G.provs[b]&&G.provs[a].cells.length&&G.provs[b].cells.length){
+    G.provs[a].adj.add(b); G.provs[b].adj.add(a); } });
+  /* 씨앗이 땅을 못 잡은 지방은 없애 둔다 */
+  Object.keys(G.provs).forEach(k=>{ if(!G.provs[k].cells.length) delete G.provs[k]; });
+  /* 이름을 얹을 자리 */
+  Object.values(G.provs).forEach(P=>{
+    let sx=0, sy=0; P.cells.forEach(([x,y])=>{ sx+=x; sy+=y; });
+    P.cx=(sx/P.cells.length+.5)*CFG.CELL;
+    P.cy=(sy/P.cells.length+.5)*CFG.CELL;
+  });
+  G.plateDirty=true; G.view='nat';
 
   /* 세력 */
   Object.keys(NATIONS).forEach(k=>{
@@ -238,9 +348,9 @@ function newGame(){
   });
   /* 붕당 */
   FACTION_SETS[0].forEach(f=>{ G.factions[f]=50; });
-  /* 신하 */
-  for(let i=0;i<7;i++) G.officials.push(mkOfficial());
-  for(let i=0;i<5;i++) G.pool.push(mkOfficial());
+  /* 신하 — 고을 수만큼은 있어야 자리를 채울 수 있다 */
+  for(let i=0;i<12;i++) G.officials.push(mkOfficial());
+  for(let i=0;i<6;i++) G.pool.push(mkOfficial());
 
   log('임진년보다 이백 년 앞선 해. 나라를 맡는다.');
   log('연도를 넘기려면 「한 해를 보낸다」.');
@@ -296,9 +406,11 @@ function endTurn(){
       if(policyVal('sut'))  t*=1.35;
       if(policyVal('bok'))  t*=0.90;
       food+=f; gold+=t;
-      // 민심 — 수령이 없으면 오르되, 수령 없이도 끝없이 나빠지지는 않는다
-      const drift = gov? (-1.2-govP) : 0.5;
-      P.unrest = clamp(P.unrest + drift + (P.fort>2?-0.2:0.2), 0, gov? 100 : 75);
+      // 민심 — 수령이 없다고 벌하지 않는다.
+      // 없으면 향리가 그럭저럭 굴리고(제자리), 좋은 수령을 앉히면 좋아진다.
+      // 이렇게 해야 임명이 '해야만 하는 일'이 아니라 '하면 좋은 일'이 된다.
+      const drift = gov? (-1.4-govP*1.2) : 0.05;
+      P.unrest = clamp(P.unrest + drift + (P.fort>2?-0.2:0.15), 0, 100);
     }
     // 인구 — 복리로만 두면 육백 년 뒤 오백억이 된다.
     // 땅이 먹여 살릴 수 있는 만큼에서 멈추게 한다(부양 한계).
@@ -324,19 +436,32 @@ function endTurn(){
   if(N.gold<0){ log('국고가 비었다. 녹봉이 밀린다.');
     G.officials.forEach(o=>o.loy=clamp(o.loy-6,0,100)); N.gold=0; }
 
-  /* 신하 — 나이·충성 */
+  /* 신하 — 나이·충성.
+     종전에는 예순여섯부터 해마다 14%씩 물러나 조정이 늘 비었고,
+     그때마다 수령을 손으로 다시 앉혀야 했다. 그게 일이 되어선 안 된다.
+     이제 오래 일하고, 물러나면 후임이 그 자리를 이어받는다. */
+  const retired=[];
   G.officials.forEach(o=>{
     o.age++;
     o.loy=clamp(o.loy + (policyVal('ye')?0.8:0) + (N.stab>60?0.5:-0.8), 0, 100);
-    if(o.age>66 && Math.random()<0.14){
+    if(o.age>74 && Math.random()<0.05) retired.push(o);
+  });
+  retired.forEach(o=>{
+    const seat=o.post;
+    G.officials=G.officials.filter(x=>x!==o);
+    if(seat && G.provs[seat]){
+      // 자리를 비워 두지 않는다. 대기 인재나 놀고 있는 신하가 곧바로 이어받는다.
+      let heir=G.officials.find(x=>!x.post);
+      if(!heir){ heir=G.pool.shift()||mkOfficial(); G.officials.push(heir); }
+      heir.post=seat;
+      log(o.nm+'이(가) 늙어 물러나고, '+heir.nm+'이(가) '+G.provs[seat].nm+'을(를) 잇는다.');
+    } else {
       log(o.nm+'이(가) 벼슬을 내려놓았다.');
-      if(o.post) o.post=null;
-      G.officials=G.officials.filter(x=>x!==o);
     }
   });
-  if(G.pool.length<5 && Math.random()<0.6) G.pool.push(mkOfficial());
+  if(G.pool.length<6) G.pool.push(mkOfficial());   // 과거는 해마다 열린다
   // 조정이 텅 비는 일은 없다. 사람이 모자라면 알아서 채워진다.
-  while(G.officials.length<3){
+  while(G.officials.length < natProvs('kor').length + 2){
     const o=G.pool.shift()||mkOfficial();
     G.officials.push(o); log(o.nm+'이(가) 조정에 들었다.');
   }
@@ -352,8 +477,16 @@ function endTurn(){
     const win=fs.find(f=>G.factions[f]===mx);
     const purged=G.officials.filter(o=>o.fac!==win && o.post);
     if(purged.length){
-      const v=pick(purged); v.post=null; v.loy=clamp(v.loy-25,0,100);
-      log('사화가 일어났다. '+win+'이 조정을 장악하고 '+v.nm+'이(가) 쫓겨났다.');
+      const v=pick(purged), seat=v.post;
+      v.post=null; v.loy=clamp(v.loy-25,0,100);
+      // 사화는 자리를 비우는 것이 아니라 자리를 빼앗는 것이다.
+      // 이긴 쪽 사람이 그 고을을 이어받는다. 빈자리로 남겨 두면 손이 가는 일만 는다.
+      let heir=G.officials.find(o=>o.fac===win && !o.post)
+            || G.officials.find(o=>!o.post);
+      if(!heir){ heir=G.pool.shift()||mkOfficial(); heir.fac=win; G.officials.push(heir); }
+      heir.post=seat;
+      log('사화가 일어났다. '+win+'이 조정을 잡고 '+v.nm+'이(가) 쫓겨났다. '
+          +G.provs[seat].nm+'은(는) '+heir.nm+'이(가) 맡는다.');
       N.stab=clamp(N.stab-8,0,100);
     }
   }
@@ -384,12 +517,12 @@ function historyEvent(){
   const once=(k,fn)=>{ if(!G['ev_'+k]){ G['ev_'+k]=1; fn(); } };
   if(y===1592) once('imjin',()=>{
     G.popup={title:'임진왜란',body:'왜군이 부산에 상륙했다. 남쪽 고을이 흔들린다.',y};
-    ['gyb','jeo','chu'].forEach(id=>{ const p=G.provs[id]; if(p){ p.unrest=clamp(p.unrest+40,0,100); p.army=Math.round(p.army*0.5); } });
+    ['gyen','jeon','chun'].forEach(id=>{ const p=G.provs[id]; if(p){ p.unrest=clamp(p.unrest+40,0,100); p.army=Math.round(p.army*0.5); } });
     log('임진왜란이 터졌다.');
   });
   if(y===1636) once('byeong',()=>{
     G.popup={title:'병자호란',body:'북방에서 청이 내려왔다.',y};
-    ['pya','hwa','gyu'].forEach(id=>{ const p=G.provs[id]; if(p) p.unrest=clamp(p.unrest+30,0,100); });
+    ['pyan','hwan','gyeo'].forEach(id=>{ const p=G.provs[id]; if(p) p.unrest=clamp(p.unrest+30,0,100); });
     log('병자호란.');
   });
   if(y===1876) once('gang',()=>{
@@ -435,7 +568,7 @@ function aiTurn(){
       for(const p of mine){
         const tgt=[...p.adj].map(id=>G.provs[id]).find(q=>q && q.nat!==k && q.nat!=='kor');
         if(tgt && p.army>tgt.army*1.6){
-          tgt.nat=k; tgt.army=Math.round(p.army*0.3); p.army=Math.round(p.army*0.7);
+          tgt.nat=k; tgt.army=Math.round(p.army*0.3); p.army=Math.round(p.army*0.7); G.plateDirty=true;
           log(natName(k)+'이(가) '+tgt.nm+'을(를) 차지했다.');
           break;
         }
@@ -455,7 +588,7 @@ function checkEnd(){
    ================================================================ */
 const ACTIONS=[
   { id:'gaegan', nm:'개간',   cost:80,  need:p=>p.nat==='kor',
-    desc:'농지를 넓힌다. 농지 +3', run:p=>{ p.farm+=3; log(p.nm+'의 농지를 넓혔다.'); } },
+    desc:'농지를 넓힌다. 농지 +3', run:p=>{ p.farm+=3; G.plateDirty=true; log(p.nm+'의 농지를 넓혔다.'); } },
   { id:'sijang', nm:'장을 연다', cost:70, need:p=>p.nat==='kor',
     desc:'상업을 키운다. 상업 +3', run:p=>{ p.trade+=3; log(p.nm+'에 장을 열었다.'); } },
   { id:'chuk',   nm:'축성',   cost:140, need:p=>p.nat==='kor'&&p.fort<6,
@@ -484,7 +617,7 @@ function invade(target){
   target.army=Math.max(0,target.army-lossD);
   if(atk>def){
     const old=natName(target.nat);
-    target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100);
+    target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100); G.plateDirty=true;
     target.army=Math.round(from.army*0.25); from.army=Math.round(from.army*0.75);
     log(from.nm+'에서 쳐서 '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
@@ -582,85 +715,255 @@ function drawTop(g){
   g.fillStyle='#cfc7b6'; g.font='11px serif'; g.fillText(Math.round(N.stab)+'', x+116, 38);
 }
 
-function drawMap(g){
-  const C=CFG.CELL;
-  // 바다
-  g.fillStyle='#101820'; g.fillRect(CFG.GX, CFG.GY, CFG.GW*C, CFG.GH*C);
-  for(let i=0;i<220;i++){
-    const q=hash2(i,3), q2=hash2(i,7);
-    g.fillStyle='rgba(80,120,150,'+(0.03+q*0.04)+')';
-    g.fillRect(CFG.GX+q*CFG.GW*C, CFG.GY+q2*CFG.GH*C, 3+q*10, 1.5);
-  }
-  // 지방
+/* ================================================================
+   지도 그리기 — 고지도
+   격자를 그대로 칠하면 네모가 보인다. 그래서
+     경계 조각을 모아 고리로 잇고 → 꼭짓점을 흔들고 → 두 번 다듬어
+   부드러운 해안선으로 바꾼다. 한지 위에 옅게 칠하고 먹으로 긋는다.
+   지도판은 바뀔 때만 다시 굽는다.
+   ================================================================ */
+const PAL={ paper:'#e7ddc4', ink:'#2c2822', gold:'#8a6a2f', red:'#9d3b32' };
+const WASH={ kor:'rgba(79,127,181,.26)', chn:'rgba(181,101,79,.24)',
+             jpn:'rgba(138,111,174,.24)', ind:'rgba(111,138,114,.24)' };
+/* 강 — 격자 좌표 폴리라인 */
+const RIVERS=[
+  [[47,11],[50,11],[53,10],[56,11]],                      // 압록·두만
+  [[57,19],[55,19],[53,19],[51,20],[49,20]],              // 한강
+  [[18,13],[24,14],[29,15],[34,15],[38,16]],              // 황하
+  [[12,21],[18,22],[24,23],[30,23],[35,23],[39,23]]       // 양자강
+];
+
+function jit(x,y){ return [x+(hash2(x,y)-.5)*.5, y+(hash2(y+31,x+17)-.5)*.5]; }
+function traceLoops(test){
+  const out=new Map(), key=(a,b)=>a+','+b;
+  const add=(ax,ay,bx,by)=>{ const k=key(ax,ay); if(!out.has(k)) out.set(k,[]); out.get(k).push([bx,by]); };
   for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++){
-    const id=G.grid[y][x]; if(!id) continue;
-    const P=G.provs[id], NA=NATIONS[P.nat], T=TERR[P.t];
-    const px=CFG.GX+x*C, py=CFG.GY+y*C;
-    const n=hash2(x,y);
-    // 지형 바탕 + 세력색 혼합 (그림이 있으면 그림으로)
-    if(!blit(g,'terrain',TERR_UV[P.t],px,py,44,44,C,C)){ g.fillStyle=T.col; g.fillRect(px,py,C,C); }
-    g.fillStyle=NA.col+ (n>0.5?'55':'44'); g.fillRect(px,py,C,C);
-    if(P===G.provs[G.sel]){ g.fillStyle='rgba(255,235,180,.22)'; g.fillRect(px,py,C,C); }
-    if(P===G.provs[G.hover]){ g.fillStyle='rgba(255,255,255,.10)'; g.fillRect(px,py,C,C); }
-    // 지형 질감
-    if(P.t==='mtn'){ g.strokeStyle='rgba(0,0,0,.28)'; g.lineWidth=1;
-      g.beginPath(); g.moveTo(px+4,py+C-5); g.lineTo(px+C/2,py+5); g.lineTo(px+C-4,py+C-5); g.stroke(); }
-    else if(P.t==='hill'){ g.strokeStyle='rgba(0,0,0,.20)';
-      g.beginPath(); g.arc(px+C/2,py+C-4,6,Math.PI,0); g.stroke(); }
-    else if(P.t==='coast'){ g.strokeStyle='rgba(160,200,220,.20)';
-      g.beginPath(); g.moveTo(px+3,py+C-6); g.lineTo(px+C-3,py+C-6); g.stroke(); }
-    else { g.fillStyle='rgba(0,0,0,.10)'; g.fillRect(px+5,py+8,3,2); g.fillRect(px+12,py+14,3,2); }
-    // 경계선
-    [[1,0],[0,1],[-1,0],[0,-1]].forEach(([dx,dy])=>{
-      const nx=x+dx, ny=y+dy;
-      const o=(nx<0||ny<0||nx>=CFG.GW||ny>=CFG.GH)?null:G.grid[ny][nx];
-      if(o===id) return;
-      const border = (o && G.provs[o].nat!==P.nat) || !o;
-      g.strokeStyle= border? 'rgba(12,12,14,.85)' : 'rgba(0,0,0,.28)';
-      g.lineWidth= border? 2 : 1;
-      g.beginPath();
-      if(dx===1){ g.moveTo(px+C,py); g.lineTo(px+C,py+C); }
-      if(dx===-1){ g.moveTo(px,py); g.lineTo(px,py+C); }
-      if(dy===1){ g.moveTo(px,py+C); g.lineTo(px+C,py+C); }
-      if(dy===-1){ g.moveTo(px,py); g.lineTo(px+C,py); }
-      g.stroke();
-    });
+    if(!test(x,y)) continue;
+    if(!test(x,y-1)) add(x,y,x+1,y);
+    if(!test(x+1,y)) add(x+1,y,x+1,y+1);
+    if(!test(x,y+1)) add(x+1,y+1,x,y+1);
+    if(!test(x-1,y)) add(x,y+1,x,y);
   }
-  // 이름 · 표식
-  Object.values(G.provs).forEach(P=>{
-    let sx=0, sy=0; P.cells.forEach(([x,y])=>{ sx+=x; sy+=y; });
-    const cx=CFG.GX+(sx/P.cells.length+0.5)*C, cy=CFG.GY+(sy/P.cells.length+0.5)*C;
-    P._cx=cx; P._cy=cy;
-    g.textAlign='center';
-    g.fillStyle='rgba(0,0,0,.65)'; g.font='12px serif';
-    g.fillText(P.nm, cx+1, cy+1);
-    g.fillStyle= P.nat==='kor'? '#f2ead7':'rgba(220,214,200,.85)';
-    g.fillText(P.nm, cx, cy);
-    if(P.cap){ g.fillStyle='#e0bd76'; g.beginPath();
-      g.arc(cx, cy-13, 3.4, 0, 7); g.fill(); }
-    if(P.unrest>50){ g.fillStyle='#c4534a'; g.font='11px serif'; g.fillText('!', cx+16, cy); }
-    const gov=officialAt(P.id);
-    if(gov){ g.fillStyle='rgba(143,208,150,.9)'; g.font='10px serif'; g.fillText('수', cx-18, cy+1); }
-    g.textAlign='left';
-    hz(CFG.GX+ (Math.min(...P.cells.map(c=>c[0])))*C,
-       CFG.GY+ (Math.min(...P.cells.map(c=>c[1])))*C,
-       (Math.max(...P.cells.map(c=>c[0]))-Math.min(...P.cells.map(c=>c[0]))+1)*C,
-       (Math.max(...P.cells.map(c=>c[1]))-Math.min(...P.cells.map(c=>c[1]))+1)*C,
-       ()=>{ G.sel=P.id; }, null);
+  const loops=[];
+  while(out.size){
+    const sk=out.keys().next().value, s=sk.split(',').map(Number);
+    let cx=s[0], cy=s[1]; const loop=[]; let guard=0;
+    while(guard++<20000){
+      const k=key(cx,cy), arr=out.get(k);
+      if(!arr||!arr.length){ out.delete(k); break; }
+      const n=arr.pop(); if(!arr.length) out.delete(k);
+      loop.push([cx,cy]); cx=n[0]; cy=n[1];
+      if(cx===s[0]&&cy===s[1]) break;
+    }
+    if(loop.length>3) loops.push(loop);
+  }
+  return loops;
+}
+function chaikin(p,it){
+  for(let k=0;k<it;k++){ const q=[];
+    for(let i=0;i<p.length;i++){ const a=p[i], b=p[(i+1)%p.length];
+      q.push([a[0]*.75+b[0]*.25, a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75, a[1]*.25+b[1]*.75]); }
+    p=q; }
+  return p;
+}
+function pathOf(test,iter){
+  const C=CFG.CELL, path=new Path2D();
+  traceLoops(test).forEach(loop=>{
+    const s=chaikin(loop.map(([x,y])=>jit(x,y)), iter===undefined?3:iter);
+    path.moveTo(s[0][0]*C, s[0][1]*C);
+    for(let i=1;i<s.length;i++) path.lineTo(s[i][0]*C, s[i][1]*C);
+    path.closePath();
   });
-  // 지도 위 마우스 → hover
+  return path;
+}
+/* 한지 */
+let PAPER=null, PLATE=null;
+function makePaper(w,h){
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.fillStyle=PAL.paper; g.fillRect(0,0,w,h);
+  for(let i=0;i<220;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=30+Math.random()*170;
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0, Math.random()<.5?'rgba(146,116,64,.045)':'rgba(255,252,240,.06)');
+    gr.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  g.lineWidth=1;
+  for(let i=0;i<1400;i++){
+    const x=Math.random()*w, y=Math.random()*h, L=5+Math.random()*24;
+    const a=(Math.random()<.5?0:Math.PI/2)+(Math.random()-.5)*.45;
+    g.strokeStyle=Math.random()<.5?'rgba(120,98,62,.055)':'rgba(255,253,244,.07)';
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+Math.cos(a)*L, y+Math.sin(a)*L); g.stroke();
+  }
+  const vg=g.createRadialGradient(w/2,h/2,Math.min(w,h)*.25,w/2,h/2,Math.max(w,h)*.72);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(92,66,30,.20)');
+  g.fillStyle=vg; g.fillRect(0,0,w,h);
+  return c;
+}
+function seaDist(){
+  const d=[]; for(let y=0;y<CFG.GH;y++) d.push(new Array(CFG.GW).fill(-1));
+  const q=[];
+  for(let y=0;y<CFG.GH;y++) for(let x=0;x<CFG.GW;x++) if(G.land[y][x]){ d[y][x]=0; q.push([x,y]); }
+  for(let h=0;h<q.length;h++){ const [x,y]=q[h];
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{ const nx=x+dx, ny=y+dy;
+      if(nx<0||ny<0||nx>=CFG.GW||ny>=CFG.GH||d[ny][nx]>=0) return;
+      d[ny][nx]=d[y][x]+1; q.push([nx,ny]); }); }
+  return d;
+}
+function terrainMarks(g,P){
+  const C=CFG.CELL;
+  g.save(); g.clip(P._path);
+  P.cells.forEach(([x,y])=>{
+    const h=hash2(x*7+3,y*13+5), h2=hash2(y*5+1,x*11+9);
+    const px=(x+.15+h*.7)*C, py=(y+.15+h2*.7)*C;
+    if(P.t==='mtn'){
+      if(h>.42) return;
+      const s=5+h2*4;
+      g.beginPath(); g.moveTo(px-s*.9,py+s*.5); g.lineTo(px,py-s*.55); g.lineTo(px+s*.9,py+s*.5);
+      g.closePath(); g.fillStyle='rgba(96,90,76,.30)'; g.fill();
+      g.strokeStyle='rgba(40,36,30,.65)'; g.lineWidth=1; g.beginPath();
+      g.moveTo(px-s*.9,py+s*.5); g.lineTo(px,py-s*.55); g.lineTo(px+s*.55,py+s*.1); g.stroke();
+    } else if(P.t==='hill'){
+      if(h>.34) return;
+      g.strokeStyle='rgba(52,46,36,.42)'; g.lineWidth=1;
+      g.beginPath(); g.arc(px,py+3,3.5+h2*2,Math.PI*1.06,Math.PI*1.94); g.stroke();
+    } else if(P.t==='coast'){
+      if(h>.30) return;
+      g.strokeStyle='rgba(60,80,84,.35)'; g.lineWidth=1;
+      for(let i=0;i<2;i++){ g.beginPath(); g.moveTo(px-4,py+i*3.5);
+        g.quadraticCurveTo(px,py+i*3.5-2,px+4,py+i*3.5); g.stroke(); }
+    } else {
+      if(h>.30) return;
+      g.strokeStyle='rgba(70,72,44,.34)'; g.lineWidth=1;
+      g.beginPath(); g.moveTo(px-3.5,py); g.lineTo(px+3.5,py);
+      g.moveTo(px-3.5,py+3); g.lineTo(px+3.5,py+3); g.stroke();
+    }
+  });
+  g.restore();
+}
+function inkStroke(g,path,w,a,col){
+  g.strokeStyle=col||PAL.ink; g.lineJoin='round'; g.lineCap='round';
+  g.globalAlpha=a*.5; g.lineWidth=w*1.9; g.stroke(path);
+  g.globalAlpha=a;    g.lineWidth=w;     g.stroke(path);
+  g.globalAlpha=1;
+}
+function buildPlate(){
+  const C=CFG.CELL, MW=CFG.GW*C, MH=CFG.GH*C;
+  const c=document.createElement('canvas'); c.width=MW; c.height=MH;
+  const g=c.getContext('2d');
+  if(!PAPER) PAPER=makePaper(MW,MH);
+  /* 바다 — 종이 위 옅은 청록, 해안 등거리선 */
+  g.drawImage(PAPER,0,0);
+  g.fillStyle='rgba(150,178,178,.34)'; g.fillRect(0,0,MW,MH);
+  const D=seaDist();
+  for(let k=4;k>=1;k--){
+    const p=pathOf((x,y)=>x>=0&&y>=0&&x<CFG.GW&&y<CFG.GH&&D[y][x]>=0&&D[y][x]<=k,3);
+    g.strokeStyle='rgba(66,96,102,'+(0.05+(5-k)*0.045)+')'; g.lineWidth=1; g.stroke(p);
+  }
+  /* 땅 바탕 — 이음매가 안 보이게 통째로 */
+  const landPath=pathOf((x,y)=>x>=0&&y>=0&&x<CFG.GW&&y<CFG.GH&&G.land[y][x],3);
+  g.save(); g.clip(landPath); g.drawImage(PAPER,0,0);
+  g.fillStyle='rgba(226,214,182,.55)'; g.fillRect(0,0,MW,MH); g.restore();
+  /* 지방 채색 + 지형 기호 */
+  Object.values(G.provs).forEach(P=>{
+    P._path=pathOf((x,y)=>x>=0&&y>=0&&x<CFG.GW&&y<CFG.GH&&G.grid[y][x]===P.id,3);
+    g.save();
+    g.fillStyle=WASH[P.nat]||WASH.ind; g.fill(P._path);
+    g.clip(P._path);
+    g.strokeStyle=NATIONS[P.nat].col; g.globalAlpha=.10; g.lineWidth=14; g.stroke(P._path);
+    g.globalAlpha=.14; g.lineWidth=5; g.stroke(P._path);
+    g.globalAlpha=1; g.restore();
+    terrainMarks(g,P);
+  });
+  /* 강 */
+  g.lineCap='round';
+  RIVERS.forEach(r=>{
+    const s=chaikin(r.map(([x,y])=>[x+.5,y+.5]),3);
+    g.beginPath(); g.moveTo(s[0][0]*C,s[0][1]*C);
+    for(let i=1;i<s.length;i++) g.lineTo(s[i][0]*C,s[i][1]*C);
+    g.strokeStyle='rgba(84,116,124,.55)'; g.lineWidth=2.2; g.stroke();
+    g.strokeStyle='rgba(150,182,186,.45)'; g.lineWidth=1; g.stroke();
+  });
+  /* 먹선 — 도 경계 → 국경 → 해안선 */
+  Object.values(G.provs).forEach(P=>inkStroke(g,P._path,0.8,.28));
+  Object.keys(NATIONS).forEach(k=>{
+    const p=pathOf((x,y)=>x>=0&&y>=0&&x<CFG.GW&&y<CFG.GH&&G.grid[y][x]&&G.provs[G.grid[y][x]].nat===k,3);
+    inkStroke(g,p,1.7,.62);
+  });
+  inkStroke(g,landPath,1.5,.75);
+  g.globalCompositeOperation='multiply'; g.globalAlpha=.35; g.drawImage(PAPER,0,0);
+  g.globalCompositeOperation='source-over'; g.globalAlpha=1;
+  PLATE=c; G.plateDirty=false;
+}
+function inkText(g,t,x,y,size,col,halo){
+  g.font=size+'px "Nanum Myeongjo","Batang",serif';
+  g.lineJoin='round'; g.strokeStyle=halo||'rgba(231,221,196,.92)';
+  g.lineWidth=3.2; g.strokeText(t,x,y);
+  g.fillStyle=col||PAL.ink; g.fillText(t,x,y);
+}
+
+function drawMap(g){
+  const C=CFG.CELL, MW=CFG.GW*C, MH=CFG.GH*C;
+  if(G.plateDirty || !PLATE) buildPlate();
+  g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(CFG.GX+4, CFG.GY+6, MW, MH);   // 종이 그림자
+  g.drawImage(PLATE, CFG.GX, CFG.GY);
+
+  g.save(); g.translate(CFG.GX, CFG.GY);
+  const S=G.sel?G.provs[G.sel]:null, Hv=G.hover?G.provs[G.hover]:null;
+  if(G.view==='unrest'){
+    Object.values(G.provs).forEach(p=>{
+      g.fillStyle='rgba(157,59,50,'+(p.unrest/100*.45)+')'; g.fill(p._path); });
+  }
+  if(Hv&&Hv!==S){ g.fillStyle='rgba(255,255,255,.16)'; g.fill(Hv._path); }
+  if(S){
+    g.fillStyle='rgba(255,246,214,.22)'; g.fill(S._path);
+    g.setLineDash([6,4]); g.lineDashOffset=-performance.now()/60;
+    g.strokeStyle='rgba(60,50,30,.9)'; g.lineWidth=2; g.stroke(S._path); g.setLineDash([]);
+  }
+  Object.values(G.provs).forEach(p=>{
+    const own=p.nat==='kor';
+    if(p.cap){
+      g.strokeStyle=PAL.ink; g.lineWidth=1.4;
+      g.beginPath(); g.arc(p.cx,p.cy-13,5,0,7); g.stroke();
+      g.beginPath(); g.arc(p.cx,p.cy-13,2.2,0,7); g.fillStyle=PAL.ink; g.fill();
+    } else if(own){
+      g.fillStyle='rgba(44,40,34,.8)'; g.beginPath(); g.arc(p.cx,p.cy-11,2,0,7); g.fill();
+    }
+    g.textAlign='center';
+    inkText(g,p.nm,p.cx,p.cy+(p.cap?6:4), (p.cap||own)?13:12,
+      own?'#2c2822':'rgba(58,52,44,.72)');
+    if(p.unrest>55){
+      g.fillStyle=PAL.red; g.beginPath();
+      g.arc(p.cx+g.measureText(p.nm).width/2+8, p.cy, 3.2, 0, 7); g.fill();
+    }
+    if(officialAt(p.id)){
+      g.fillStyle='rgba(60,110,70,.85)'; g.beginPath();
+      g.arc(p.cx-g.measureText(p.nm).width/2-8, p.cy-3, 2.6, 0, 7); g.fill();
+    }
+    g.textAlign='left';
+  });
+  g.restore();
+
+  /* 고을 누르기 */
   G.hover=null;
   const gx=Math.floor((Mouse.x-CFG.GX)/C), gy=Math.floor((Mouse.y-CFG.GY)/C);
   if(gx>=0&&gy>=0&&gx<CFG.GW&&gy<CFG.GH && G.grid[gy][gx]) G.hover=G.grid[gy][gx];
-  // 범례
+  hz(CFG.GX, CFG.GY, MW, MH, ()=>{ if(G.hover) G.sel=G.hover; });
+
+  /* 범례와 보기 전환 */
+  let lx=CFG.GX+6, ly=CFG.GY+MH+16;
   g.font='11px serif';
-  let lx=CFG.GX+4, ly=CFG.GY+CFG.GH*C+16;
   Object.keys(NATIONS).forEach(k=>{
+    if(!natProvs(k).length) return;
     if(!blit(g,'flags',NAT_UV[k],lx,ly-11,48,32,18,12)){
       g.fillStyle=NATIONS[k].col; g.fillRect(lx,ly-9,12,10); }
-    g.fillStyle='#c9bfa8'; g.fillText(natName(k)+'  '+natProvs(k).length, lx+24, ly);
-    lx+=120;
+    g.fillStyle='#c9bfa8'; g.fillText(natName(k)+' '+natProvs(k).length, lx+22, ly);
+    lx+=104;
   });
+  btn(g, CFG.GX+MW-150, ly-16, 150, 22,
+      G.view==='unrest'?'보기 · 민심':'보기 · 세력', false,
+      ()=>{ G.view = G.view==='unrest'?'nat':'unrest'; });
 }
 
 /* 오른쪽 패널 */
@@ -715,8 +1018,28 @@ function sideState(g,x,y,w){
     g.fillStyle='#8fa86a'; g.font='12px serif'; g.fillText('· '+P.nm, x, yy);
   });
 }
+function autoAssign(){
+  const empty=natProvs('kor').filter(p=>!officialAt(p.id));
+  if(!empty.length){ log('빈 고을이 없소.'); return; }
+  let n=0;
+  empty.forEach(p=>{
+    let o=G.officials.find(x=>!x.post);
+    if(!o){                                  // 사람이 모자라면 등용까지 알아서 (있는 돈 안에서)
+      if(G.pool.length && G.nations.kor.gold>=40){
+        o=G.pool.shift(); G.nations.kor.gold-=40; G.officials.push(o);
+      } else return;
+    }
+    o.post=p.id; G.factions[o.fac]=clamp(G.factions[o.fac]+2,0,100); n++;
+  });
+  log(n? (n+'개 고을에 수령을 보냈다.') : '보낼 사람이 없소.');
+  if(n) Audio_ok();
+}
+function Audio_ok(){}
 function sideOfficials(g,x,y,w){
   g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('조정 ('+G.officials.length+')', x, y+12);
+  const empty=natProvs('kor').filter(p=>!officialAt(p.id)).length;
+  btn(g, x+w-104, y+2, 104, 22, empty? ('빈 고을 '+empty+' 채우기') : '모두 배치됨',
+      false, empty? autoAssign : null, !empty);
   g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
   g.fillText('고을을 고른 뒤 이름을 누르면 수령으로 보낸다', x, y+28);
   let yy=y+44;
@@ -916,7 +1239,7 @@ function loadGame(){
     G.factions=d.factions; G.policies=d.policies; G.log=d.log||[];
     Object.entries(d.provs).forEach(([k,v])=>{ if(G.provs[k]) Object.assign(G.provs[k],v); });
     Object.keys(d.ev||{}).forEach(k=>G[k]=1);
-    recalc();
+    recalc(); G.plateDirty=true;
     return true;
   }catch(e){ return false; }
 }
