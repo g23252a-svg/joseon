@@ -724,7 +724,8 @@ function newGame(){
     jpn:{ rel:-10, tribute:false, trade:false, ally:false, war:false, warYears:0, truce:0, envoy:0 }
   };
   /* 붕당 */
-  FACTION_SETS[0].forEach(f=>{ G.factions[f]=50; });
+  // 세력은 조정 자리의 몫이다 — 처음에는 고르게 나눈다 (합이 늘 100)
+  FACTION_SETS[0].forEach((f,_,a)=>{ G.factions[f]=100/a.length; });
   /* 신하 — 고을 수만큼은 있어야 자리를 채울 수 있다 */
   for(let i=0;i<12;i++) G.officials.push(mkOfficial());
   for(let i=0;i<6;i++) G.pool.push(mkOfficial());
@@ -1065,18 +1066,30 @@ function endTurn(){
     const o=G.pool.shift()||mkOfficial(); G.officials.push(o);
   }
 
-  /* ── 붕당 ── */
+  /* ── 붕당 ──
+     예전에는 자리를 쥔 신하 수만큼 해마다 더하기만 했다(n*2.2 − 1.4).
+     고을이 열여섯이면 해마다 열대여섯씩 올라, 네댓 해면 두 당이 나란히 100에
+     붙어 버린다. 붙고 나면 눈금이 아무것도 말하지 않는다 — 누가 조정을
+     쥐었는지, 내가 무엇을 해야 하는지가 화면에서 사라진다.
+
+     이제 세력은 '조정의 자리를 얼마나 쥐었는가'의 몫이다. 합은 늘 100이고,
+     수령을 누구로 앉히느냐가 곧 붕당을 다루는 손이 된다. */
   const fs=Object.keys(G.factions);
-  // 안동 같은 학문의 고을은 붕당을 키운다
+  // 안동 같은 학문의 고을과 대동법은 다툼을 키운다 — 고른 데서 더 멀어지게 한다
   const 열기 = 우리.reduce((a,p)=>a+tagVal(p,'faction',0), 0);
+  const 재직 = G.officials.filter(o=>o.post);
+  const 고름 = 100/Math.max(1,fs.length);          // 고르게 나뉘었을 때의 몫
+  const 증폭 = 1 + 열기*0.5 + M.facHeat*0.5;
   fs.forEach(f=>{
-    const n=G.officials.filter(o=>o.fac===f && o.post).length;
-    G.factions[f]=clamp(G.factions[f] + (n*2.2) - 1.4 + M.facHeat + 열기, 0, 100);
+    const 몫 = 재직.length? 재직.filter(o=>o.fac===f).length/재직.length*100 : 고름;
+    const 목표 = clamp(고름 + (몫-고름)*증폭, 0, 100);
+    G.factions[f]=clamp(G.factions[f] + (목표-G.factions[f])*0.30, 0, 100);
   });
   // 명분이 얕은 조정에서 사화가 잦다 — 이길 이유가 없으면 이길 사람을 만든다
   const mx=Math.max(...fs.map(f=>G.factions[f]));
-  const 사화확률 = clamp(0.25 + (55-G.legit)*0.005, 0.08, 0.55);
-  if(mx>88 && Math.random()<사화확률){
+  const 사화문턱 = 고름 + 22;                       // 고른 몫보다 한참 앞선 당이 있을 때
+  const 사화확률 = clamp(0.22 + (55-G.legit)*0.005, 0.06, 0.50);
+  if(mx>사화문턱 && Math.random()<사화확률){
     const win=fs.find(f=>G.factions[f]===mx);
     const purged=G.officials.filter(o=>o.fac!==win && o.post);
     if(purged.length){
@@ -1098,7 +1111,7 @@ function endTurn(){
     scoreEra(G.era);                                  // 지난 시대 성적을 매긴다
     G.era=e;
     const E=ERAS[e], nf=FACTION_SETS[Math.min(FACTION_SETS.length-1,e)];
-    G.factions={}; nf.forEach(f=>G.factions[f]=50);
+    G.factions={}; nf.forEach(f=>G.factions[f]=100/nf.length);
     G.officials.forEach(o=>o.fac=pick(nf));
     G.popup={ kind:'era', title:E.nm, body:E.desc, y:G.year };
     log('── '+E.nm+' ──  '+E.desc);
@@ -2368,14 +2381,28 @@ function sideState(g,x,y,w){
     yy+=32;
   });
   yy+=10;
-  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('붕당', x, yy); yy+=8;
-  Object.keys(G.factions).forEach(f=>{
-    yy+=18;
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('붕당', x, yy);
+  const 재직=G.officials.filter(o=>o.post);
+  const 붕당=Object.keys(G.factions), 고름=100/Math.max(1,붕당.length);
+  g.fillStyle='rgba(150,145,135,.65)'; g.font='9px serif'; g.textAlign='right';
+  g.fillText('조정 자리의 몫', x+w, yy); g.textAlign='left';
+  yy+=8;
+  붕당.forEach(f=>{
+    yy+=20;
+    const 자리=재직.filter(o=>o.fac===f).length;
+    const 센가=G.factions[f]>고름+22;
     g.fillStyle='#c9bfa8'; g.font='12px serif'; g.fillText(f, x, yy);
-    bar(g, x+56, yy-9, w-90, 10, G.factions[f]/100, G.factions[f]>80?'#c4534a':'#7d94b8');
+    bar(g, x+50, yy-9, w-104, 10, G.factions[f]/100, 센가?'#c4534a':'#7d94b8');
     g.fillStyle='rgba(180,175,160,.8)'; g.font='10px serif'; g.textAlign='right';
-    g.fillText(Math.round(G.factions[f])+'', x+w, yy); g.textAlign='left';
+    g.fillText(Math.round(G.factions[f])+'', x+w, yy);
+    g.fillStyle='rgba(140,135,125,.7)'; g.font='9px serif';
+    g.fillText('자리 '+자리+'/'+재직.length, x+w, yy+10); g.textAlign='left';
+    if(inRect(Mouse,{x:x-4,y:yy-14,w:w+8,h:22}))
+      G.tip = '수령 자리 '+재직.length+'곳 가운데 '+자리+'곳이 '+f+'의 것이다.'
+            + '  한 당이 '+Math.round(고름+22)+'을 넘으면 사화가 날 수 있다 — '
+            + '다른 당의 신하를 수령으로 보내면 몫이 돌아온다.';
   });
+  yy+=6;
   yy+=30;
   g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('시행 중인 정책', x, yy); yy+=6;
   if(!G.policies.length){ yy+=18; g.fillStyle='#5f5a53'; g.font='12px serif'; g.fillText('없다', x, yy); }
@@ -2398,7 +2425,8 @@ function autoAssign(){
         o=G.pool.shift(); G.nations.kor.gold-=40; G.officials.push(o);
       } else return;
     }
-    o.post=p.id; G.factions[o.fac]=clamp(G.factions[o.fac]+2,0,100); n++;
+    // 세력은 해마다 자리의 몫에서 다시 셈한다 — 여기서 따로 더하지 않는다
+    o.post=p.id; n++;
   });
   log(n? (n+'개 고을에 수령을 보냈다.') : '보낼 사람이 없소.');
   if(n) Audio_ok();
@@ -2456,7 +2484,6 @@ function assign(o){
   const prev=officialAt(P.id); if(prev) prev.post=null;
   o.post=P.id;
   log(o.nm+'을(를) '+P.nm+' 수령으로 보냈다.');
-  G.factions[o.fac]=clamp(G.factions[o.fac]+3,0,100);
 }
 function recruit(o){
   const N=G.nations.kor;
