@@ -16,7 +16,7 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.ops import transform, unary_union
 
 
-MAP_W, MAP_H, PAD, X_STRETCH = 968, 572, 14, 1.30
+MAP_W, MAP_H, PAD = 968, 572, 14
 SOURCE_URL = (
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/"
     "v5.1.2/geojson/ne_10m_admin_1_states_provinces.geojson"
@@ -38,8 +38,11 @@ GROUPS = {
     "lia": {"CN-LN"},
     "heb": {"CN-BJ", "CN-TJ", "CN-HE", "CN-SX", "CN-HA"},
     "sha": {"CN-SD"},
-    "sxi": {"CN-SN", "CN-NX", "CN-GS"},
-    "sch": {"CN-SC", "CN-CQ", "CN-GZ", "CN-YN"},
+    # The western provinces must remain in the silhouette.  The game has only
+    # nine Chinese macro-regions, so Xinjiang/Qinghai join the northwest and
+    # Tibet joins the southwest rather than being cut off the map.
+    "sxi": {"CN-SN", "CN-NX", "CN-GS", "CN-XJ", "CN-QH"},
+    "sch": {"CN-SC", "CN-CQ", "CN-GZ", "CN-YN", "CN-XZ"},
     "jia": {"CN-AH", "CN-HB", "CN-HN", "CN-JS", "CN-JX", "CN-SH", "CN-ZJ"},
     "fuj": {"CN-FJ"},
     "gua": {"CN-GD", "CN-GX", "CN-HI"},
@@ -61,7 +64,7 @@ LABEL_LONLAT = {
     "gyu": (127.0, 37.5), "gan": (128.5, 38.0), "chu": (127.1, 36.4),
     "gyb": (128.6, 35.6), "jeo": (126.7, 34.8),
     "man": (127.0, 47.1), "lia": (122.7, 41.4), "heb": (115.3, 38.3),
-    "sha": (118.5, 36.4), "sxi": (107.2, 35.4), "sch": (104.2, 28.6),
+    "sha": (118.5, 36.4), "sxi": (93.5, 38.5), "sch": (91.5, 30.5),
     "jia": (116.4, 29.4), "fuj": (118.7, 26.2), "gua": (111.4, 22.7),
     "hok": (142.3, 43.2), "toh": (140.4, 39.0), "kto": (138.8, 36.2),
     "kan": (136.0, 35.0), "chg": (133.0, 34.8), "shi": (133.7, 33.7),
@@ -188,7 +191,16 @@ def load_regions(admin1_path: Path):
     if missing:
         raise SystemExit("Missing Natural Earth codes: " + ", ".join(missing))
 
-    crop = box(98.0, 17.0, 146.5, 54.5)
+    assigned = set().union(*GROUPS.values()) | {"CN-NM"}
+    unassigned_china = sorted(
+        code for code in by_code
+        if code.startswith("CN-") and code not in assigned and code != "CN-X01~"
+    )
+    if unassigned_china:
+        raise SystemExit("Unassigned Chinese provinces: " + ", ".join(unassigned_china))
+
+    # Keep the complete mainland outline: western China starts near 73E.
+    crop = box(70.0, 15.0, 148.0, 56.0)
     regions = {}
     for region_id, codes in GROUPS.items():
         if region_id == "tsu":
@@ -211,20 +223,22 @@ def load_regions(admin1_path: Path):
 
 def build(admin1_path: Path):
     geo = load_regions(admin1_path)
-    raw = {key: map_coords(lcc_xy, geom) for key, geom in geo.items()}
-    all_raw = unary_union(list(raw.values()))
-    minx, miny, maxx, maxy = all_raw.bounds
-    scale = min((MAP_W - PAD * 2) / ((maxx - minx) * X_STRETCH), (MAP_H - PAD * 2) / (maxy - miny))
-    ox = (MAP_W - (maxx - minx) * scale * X_STRETCH) / 2
-    oy = (MAP_H - (maxy - miny) * scale) / 2
+    projected = {key: map_coords(lcc_xy, geom) for key, geom in geo.items()}
+    all_projected = unary_union(list(projected.values()))
+    minx, miny, maxx, maxy = all_projected.bounds
+    scale = min((MAP_W - PAD * 2) / (maxx - minx), (MAP_H - PAD * 2) / (maxy - miny))
+    draw_w, draw_h = (maxx - minx) * scale, (maxy - miny) * scale
+    ox, oy = (MAP_W - draw_w) / 2, (MAP_H - draw_h) / 2
 
     def to_local(x, y):
-        return ox + (x - minx) * scale * X_STRETCH, MAP_H - oy - (y - miny) * scale
+        # One projection and one uniform scale preserve shapes, borders and
+        # the countries' true relative positions.
+        return ox + (x - minx) * scale, oy + (maxy - y) * scale
 
     local = {}
-    for key, geom in raw.items():
-        g = map_coords(to_local, geom).simplify(0.48, preserve_topology=True)
-        local[key] = prune(valid(g), 0.12 if key in {"tsu", "ryu"} else 0.32)
+    for key, geom in projected.items():
+        g = map_coords(to_local, geom).simplify(0.38, preserve_topology=True)
+        local[key] = prune(valid(g), 0.10 if key in {"tsu", "ryu"} else 0.26)
 
     coast = prune(valid(unary_union(list(local.values()))), 0.18).simplify(0.35, preserve_topology=True)
     borders = []
