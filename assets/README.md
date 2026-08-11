@@ -5,6 +5,7 @@
 
 | 파일 | 최종 크기 | 한 칸 | 상태 |
 |---|---|---|---|
+| `map_geo.js` | 약 125KB | 26개 Path2D 권역 | ☑ |
 | `terrain.png` | 176×44 | 44×44 | ☑ |
 | `icons.png` | 256×32 | 32×32 | ☑ |
 | `flags.png` | 144×32 | 48×32 | ☑ |
@@ -17,3 +18,7 @@
 **한자는 쓰지 마십시오.** 글자가 필요하면 한글로.
 
 원본 시트는 `tools/generate_assets.py`로 같은 결과를 다시 만들 수 있습니다.
+
+`map_geo.js`는 Natural Earth 5.1.2의 공개 도메인 1:10m 행정구역을 게임의
+26개 권역으로 병합한 벡터 데이터입니다. 원본 GeoJSON은 저장소에 넣지 않으며,
+`tools/generate_map_geo.py --admin1 <원본.geojson> --out assets/map_geo.js`로 재생성합니다.
