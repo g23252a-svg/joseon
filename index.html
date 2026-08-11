@@ -22,11 +22,12 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.2.1';
+const VERSION = '0.3.0';
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
 
-const CFG = { W:1280, H:720, CELL:12, GX:8, GY:62, GW:74, GH:40, SAVE:'donga_save_v4' };
+const CFG = { W:1280, H:720, CELL:12, GX:8, GY:62, GW:74, GH:40,
+              SAVE:'donga_save_v5', RECORDS:'donga_records_v1' };
 
 /* ---------------------------------------------------------------- 유틸 */
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -40,7 +41,7 @@ function num(n){ return Math.round(n).toLocaleString('ko-KR'); }
 /* ---------------------------------------------------------------- 입력 */
 const Key={pressed:{},down:{}};
 addEventListener('keydown',e=>{ if(!Key.down[e.code])Key.pressed[e.code]=true; Key.down[e.code]=true;
-  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
+  if(['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); });
 addEventListener('keyup',e=>{ Key.down[e.code]=false; });
 const Mouse={x:0,y:0,click:false,rclick:false,wheel:0};
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -311,6 +312,155 @@ const PROVDEF=[
 ];
 
 /* ================================================================
+   특산 — 고을이 무엇을 내는가
+   ----------------------------------------------------------------
+   개간과 장시는 어느 고을에서나 똑같았다. 그러면 지도는 숫자판일 뿐이다.
+   여기서 고을마다 내는 물건을 정한다. 물건은 두 곳에서 값을 한다.
+     · 안에서 — 장사에 곱해진다
+     · 밖으로 — 통상 조약을 맺은 나라에 팔린다 (수출)
+   인삼과 비단은 팔 데가 있어야 값이 되고, 쌀은 그렇지 않다.
+   ================================================================ */
+const GOODS={
+  '쌀':   { trade:1.05, exp:1, note:'먹인다. 팔아서 크게 남지는 않는다.' },
+  '콩':   { trade:1.03, exp:1, note:'북방의 밭곡식.' },
+  '어물': { trade:1.06, exp:1, note:'말리고 절여 내륙으로 보낸다.' },
+  '소금': { trade:1.08, exp:1, note:'없으면 아무것도 저장할 수 없다.' },
+  '목재': { trade:1.02, exp:1, note:'배와 성과 궁궐이 여기서 나온다.' },
+  '말':   { trade:1.02, exp:2, note:'기병의 밑천.' },
+  '철':   { trade:1.05, exp:2, note:'벼려서 무기가 된다.' },
+  '석탄': { trade:1.04, exp:2, note:'때는 데 쓰다가, 뒤에는 공장을 돌린다.' },
+  '모피': { trade:1.05, exp:2, note:'북방 교역의 오랜 물건.' },
+  '약재': { trade:1.06, exp:2, note:'값이 무게에 비해 크다.' },
+  '무명': { trade:1.08, exp:2, note:'옷이 되고, 군포가 되고, 돈이 된다.' },
+  '종이': { trade:1.06, exp:2, note:'글이 있는 나라의 물건.' },
+  '유황': { trade:1.04, exp:2, note:'화약의 재료.' },
+  '설탕': { trade:1.08, exp:2, note:'남쪽 섬의 단맛.' },
+  '차':   { trade:1.08, exp:2, note:'마시는 것이 아니라 실어 나르는 것이다.' },
+  '공예': { trade:1.12, exp:2, note:'도읍의 솜씨.' },
+  '인삼': { trade:1.10, exp:3, note:'중국과 일본이 값을 다투어 부른다.' },
+  '은':   { trade:1.10, exp:3, note:'그 자체가 돈이다.' },
+  '비단': { trade:1.15, exp:3, note:'천 리를 가도 밑지지 않는다.' },
+  '도자기':{ trade:1.12, exp:3, note:'구워 내면 바다를 건넌다.' },
+  '교역품':{ trade:1.18, exp:3, note:'제 것이 아니라 남의 것을 옮겨 먹는다.' }
+};
+const PROV_GOOD={
+  hamb:'모피', hamn:'목재', pyab:'약재', pyan:'무명', hwan:'쌀',  gaes:'인삼',
+  hans:'공예', gyeo:'쌀',   gang:'목재', chub:'약재', chun:'쌀',  gyeb:'철',
+  ando:'종이', gyen:'어물', jeon:'쌀',   jeju:'말',
+  mong:'말',   manj:'모피', liao:'콩',   hebe:'공예', shan:'소금', shax:'석탄',
+  shaa:'약재', hena:'쌀',   sich:'차',   hube:'쌀',   jian:'비단', zhej:'도자기',
+  fuji:'차',   guan:'교역품',
+  hokk:'어물', toho:'목재', kant:'쌀',   chubu:'철',  kans:'공예', chug:'은',
+  shik:'소금', kyus:'도자기',sats:'유황',
+  tsus:'교역품', ryuk:'교역품', taiw:'설탕'
+};
+function goodOf(p){ return p && PROV_GOOD[p.id] || null; }
+function goodVal(p,k,def){ const g=GOODS[goodOf(p)]; return g && g[k]!=null? g[k] : def; }
+
+/* ================================================================
+   병종 — 시대가 바뀌면 싸우는 방식이 바뀐다
+   ----------------------------------------------------------------
+   예전에는 1392년의 창검군과 1988년의 기계화 사단이 같은 식으로 붙었다.
+   병력 수만 견주면 육백 년을 한 판에 담은 뜻이 없다.
+   ================================================================ */
+const UNITS=[
+  { nm:'창검군',  navy:'맹선',   horse:'기병',   atk:1.00, def:1.00 },
+  { nm:'조총병',  navy:'판옥선', horse:'기병',   atk:1.12, def:1.06 },
+  { nm:'속오군',  navy:'전선',   horse:'마병',   atk:1.20, def:1.16 },
+  { nm:'별기군',  navy:'포함',   horse:'마병',   atk:1.38, def:1.24 },
+  { nm:'보병대',  navy:'구축함', horse:'기병대', atk:1.58, def:1.36 },
+  { nm:'국방군',  navy:'경비함', horse:'기갑',   atk:1.78, def:1.48 },
+  { nm:'기계화군',navy:'호위함', horse:'기갑',   atk:2.05, def:1.64 },
+  { nm:'현대군',  navy:'이지스함',horse:'기갑',  atk:2.35, def:1.82 }
+];
+/* 고을의 병종 — 땅의 성격이 무엇을 기르는지를 정한다 */
+function unitOf(p){
+  const U=UNITS[Math.min(UNITS.length-1, G.era)];
+  if(!p) return { nm:U.nm, atk:U.atk, def:U.def, kind:'foot' };
+  if(tagVal(p,'navy',0)>1) return { nm:U.navy, atk:U.atk*1.04, def:U.def*0.96, kind:'navy' };
+  if(tagVal(p,'atk',0)>0)  return { nm:U.horse, atk:U.atk*1.10, def:U.def*0.94, kind:'horse' };
+  return { nm:U.nm, atk:U.atk, def:U.def, kind:'foot' };
+}
+
+/* ================================================================
+   기술 — 하나의 숫자가 아니라 네 갈래의 나무
+   ----------------------------------------------------------------
+   종전의 '기술'은 이웃과 견주는 눈금 하나였다. 올려도 무엇이 좋아졌는지
+   손에 잡히지 않았다. 이제 해마다 연구가 쌓이고, 쌓인 것으로 마디를 연다.
+   마디마다 하는 일이 분명히 적혀 있고, 적힌 그대로 계산한다.
+   가지마다 앞의 마디를 열어야 다음이 열린다. 넷을 다 가질 수는 없다.
+   ================================================================ */
+const TECH_BRANCH={
+  nong:{ nm:'농정', col:'#8fbf6a', note:'먹는 일. 굶지 않아야 나머지가 있다.' },
+  sang:{ nm:'상공', col:'#e0bd76', note:'버는 일. 장시에서 공장까지.' },
+  gun: { nm:'군기', col:'#c4534a', note:'지키는 일. 창에서 포까지.' },
+  hak: { nm:'학문', col:'#b79fe0', note:'배우는 일. 배움은 늦게 오지만 오래 간다.' }
+};
+const TECHS=[
+  /* 농정 */
+  { id:'sucha',  br:'nong', era:0, cost:90,  nm:'수차',     good:'식량 +6%' },
+  { id:'iang',   br:'nong', era:2, cost:190, nm:'이앙법',   good:'식량 +10%, 인구 성장 +4%' },
+  { id:'guhwang',br:'nong', era:3, cost:280, nm:'구황작물', good:'식량 +6%, 굶주림 피해 절반' },
+  { id:'birio',  br:'nong', era:6, cost:480, nm:'화학비료', good:'식량 +18%' },
+  { id:'gigye',  br:'nong', era:7, cost:660, nm:'기계농',   good:'식량 +15%, 인구 성장 +4%' },
+  /* 상공 */
+  { id:'sijeon', br:'sang', era:0, cost:90,  nm:'시전',     good:'상업 +8%' },
+  { id:'sangpy', br:'sang', era:2, cost:190, nm:'상평통보', good:'상업 +10%, 국고에 이자가 붙는다' },
+  { id:'gaehang',br:'sang', era:3, cost:300, nm:'개항장',   good:'수출 +40%, 상업 +6%' },
+  { id:'gongjang',br:'sang',era:6, cost:500, nm:'공장',     good:'상업 +20%, 수출 +20%' },
+  { id:'bando',  br:'sang', era:7, cost:720, nm:'반도체',   good:'상업 +25%, 수출 +30%, 기술 +2/년' },
+  /* 군기 */
+  { id:'hwacha', br:'gun',  era:0, cost:120, nm:'화차',     good:'방어 +10%' },
+  { id:'geobuk', br:'gun',  era:1, cost:210, nm:'거북선',   good:'수군 +30%, 방어 +6%' },
+  { id:'hongi',  br:'gun',  era:2, cost:330, nm:'홍이포',   good:'공격 +12%, 성곽 값 -15%' },
+  { id:'sinsik', br:'gun',  era:3, cost:520, nm:'신식군제', good:'공격 +15%, 군 유지비 -12%' },
+  { id:'jaju',   br:'gun',  era:6, cost:700, nm:'자주국방', good:'공격 +22%, 방어 +18%' },
+  /* 학문 */
+  { id:'jiphyeon',br:'hak', era:0, cost:90,  nm:'집현전',   good:'연구 +25%' },
+  { id:'sillok', br:'hak',  era:2, cost:180, nm:'실록청',   good:'정통 +0.5/년, 민심 +0.3' },
+  { id:'seoyang',br:'hak',  era:3, cost:300, nm:'서양학',   good:'연구 +30%, 기술 +1/년' },
+  { id:'hakgyo', br:'hak',  era:5, cost:460, nm:'신식학교', good:'연구 +30%, 인구 성장 +5%' },
+  { id:'yeonso', br:'hak',  era:7, cost:660, nm:'연구소',   good:'연구 +40%, 기술 +3/년' }
+];
+const TECH_ORDER={};
+Object.keys(TECH_BRANCH).forEach(br=>{ TECH_ORDER[br]=TECHS.filter(t=>t.br===br).map(t=>t.id); });
+function techDone(id){ return !!(G.res && G.res.done[id]); }
+function techPrev(t){
+  const arr=TECH_ORDER[t.br], i=arr.indexOf(t.id);
+  return i>0? TECHS.find(x=>x.id===arr[i-1]) : null;
+}
+function techOpen(t){
+  if(G.era<t.era) return false;
+  const p=techPrev(t);
+  return !p || techDone(p.id);
+}
+
+/* ================================================================
+   외교 — 이웃이 있다는 것
+   ----------------------------------------------------------------
+   종전에는 명과 일본이 주사위였다. 달랠 수도, 등질 수도 없었다.
+   이제 사이(친교)가 있고, 사이를 움직이는 손이 있다.
+     사신    — 사이를 조금 올린다. 좋은 외교 신하가 있으면 더 오른다.
+     조공    — 해마다 바치고 사이를 크게 올린다. 정통을 깎는다.
+     통상    — 특산을 판다. 사이가 나빠지면 저절로 끊긴다.
+     동맹    — 그 나라가 우리를 치지 않고, 우리를 친 쪽을 문다.
+     화친    — 전쟁을 끝낸다. 값을 치른다.
+   ================================================================ */
+const DIP_NATS=['chn','jpn'];
+function dipOf(k){ return G.dip && G.dip[k]; }
+/* 사이의 이름 */
+function relName(v){
+  return v>=70?'형제' : v>=40?'화친' : v>=10?'우호' : v>-10?'무덤덤'
+       : v>-40?'서먹' : v>-70?'적대' : '원수';
+}
+function relCol(v){ return v>=40?'#8fa86a' : v>=10?'#9fd0e8' : v>-10?'#c9bfa8' : v>-40?'#c9a24a':'#c4534a'; }
+/* 우리 조정에서 가장 나은 외교 신하 — 사신의 성패가 여기 달렸다 */
+function bestDip(){
+  let b=0; G.officials.forEach(o=>{ if(o.dip>b) b=o.dip; });
+  return b;
+}
+
+/* ================================================================
    콘텐츠 — 사건 34 / 인물 54 / 정책 20
    사건은 전부 세 갈래다. 고르는 것이 곧 이 게임이다.
    ================================================================ */
@@ -342,10 +492,11 @@ function makeName(){ return pick(SUR)+pick(GIV)+pick(GIV); }
 let G=null;
 function newGame(){
   G={ year:1392, era:0, turn:0, mode:'play', mapMode:START_MAP_MODE, log:[], tab:'국정',
-      sel:null, hover:null, nat:'kor', hints:[], ended:false,
+      sel:null, hover:null, nat:'kor', ended:false,
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
-      factions:{}, policies:[], polSince:{}, warTarget:null, popup:null, ver:VERSION,
-      evDone:{}, scores:[], legit:50, pendingEvent:null, report:null, view:'nat' };
+      factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
+      evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
+      res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0 };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -431,6 +582,12 @@ function newGame(){
     G.nations[k]={ id:k, gold: k==='kor'?600:900, food:400, tech:10,
       stab:60, manpower:0, ai:k!=='kor' };
   });
+  /* 이웃과의 사이 — 1392년의 자리에서 시작한다.
+     책봉을 받은 큰 나라와는 이미 가깝고, 바다 건너와는 왜구로 서먹하다. */
+  G.dip={
+    chn:{ rel: 25, tribute:false, trade:false, ally:false, war:false, warYears:0, truce:0, envoy:0 },
+    jpn:{ rel:-10, tribute:false, trade:false, ally:false, war:false, warYears:0, truce:0, envoy:0 }
+  };
   /* 붕당 */
   FACTION_SETS[0].forEach(f=>{ G.factions[f]=50; });
   /* 신하 — 고을 수만큼은 있어야 자리를 채울 수 있다 */
@@ -511,6 +668,14 @@ function admMax(){
   return clamp(n, 2, 14);
 }
 
+/* 연구 — 한 해에 쌓이는 몫.
+   결산과 화면이 같은 값을 보이도록 셈하는 자리를 하나로 둔다. */
+function researchGain(){
+  const N=G.nations.kor;
+  return +(natProvs('kor').reduce((a,p)=>a + 0.30*tagVal(p,'res',1)*(1+p.dev/70), 0)
+           * (0.55 + N.stab/150) * mods().res).toFixed(2);
+}
+
 /* 별칙 — 정무를 다 쓰고도 더 하려면 국고를 태운다.
    값이 가파르게 뛰고 조정이 지치므로, 돈이 남아돌 때만 뜻이 있다. */
 function byeolCount(){ return G.byeol||0; }
@@ -528,10 +693,14 @@ function byeolPay(){
 const POL_CONFLICT=[['silhak','yechi'],['swaeguk','gaehwa'],['swaeguk','suchul'],
                     ['nongbon','suchul'],['toji','chagwan']];
 function polYears(id){ return G.polSince && G.polSince[id]!=null ? G.year-G.polSince[id] : 0; }
-function polMods(){
+/* 한 해의 모든 보정을 여기 한 곳에서 낸다 — 정책 · 기술 마디 · 조약.
+   화면에 적은 설명과 계산이 어긋나지 않으려면 셈하는 자리가 하나여야 한다. */
+function mods(){
   const m={ food:1, trade:1, goldMul:1, tech:0, stab:0, loy:0, pop:1,
             defKor:1, armyReg:1, upArmy:1, moCost:1, bldCost:1, fortCost:1,
-            invRisk:1, facHeat:0, popMo:1 };
+            invRisk:1, facHeat:0, popMo:1,
+            /* 이번 판에서 새로 생긴 것들 */
+            atk:1, def:1, navy:1, exp:1, res:1, famine:1, interest:0, legit:0 };
   const has=id=>G.policies.includes(id);
   if(has('nongbon')){ m.food*=1.18; m.trade*=0.88; m.bldCost*=0.8; }
   if(has('yechi')){ m.stab+=0.6; m.loy+=1.0; m.tech-=1.0; }
@@ -552,22 +721,60 @@ function polMods(){
   if(has('suchul')){ m.trade*=1.35; m.pop*=0.85; m.stab-=0.6; }
   if(has('junghwa')){ m.trade*=1.30; m.upArmy*=0.85; m.goldMul*=0.80; m.stab-=0.8; }
   if(has('bokji')){ m.stab+=1.4; m.pop*=1.08; m.goldMul*=0.85; }
-  if(has('yeongu')){ m.tech+= polYears('yeongu')>=5?7:1; m.trade*=1.25; m.goldMul*=0.82; }
+  if(has('yeongu')){ m.tech+= polYears('yeongu')>=5?7:1; m.trade*=1.25; m.goldMul*=0.82; m.res*=1.35; }
+
+  /* ── 기술 마디 — 적힌 그대로 ── */
+  const T=id=>techDone(id);
+  if(T('sucha'))    m.food*=1.06;
+  if(T('iang'))   { m.food*=1.10; m.pop*=1.04; }
+  if(T('guhwang')){ m.food*=1.06; m.famine*=0.5; }
+  if(T('birio'))    m.food*=1.18;
+  if(T('gigye'))  { m.food*=1.15; m.pop*=1.04; }
+  if(T('sijeon'))   m.trade*=1.08;
+  if(T('sangpy')) { m.trade*=1.10; m.interest+=0.004; }
+  if(T('gaehang')){ m.exp*=1.40; m.trade*=1.06; }
+  if(T('gongjang')){ m.trade*=1.20; m.exp*=1.20; }
+  if(T('bando'))  { m.trade*=1.25; m.exp*=1.30; m.tech+=2; }
+  if(T('hwacha'))   m.def*=1.10;
+  if(T('geobuk')) { m.navy*=1.30; m.def*=1.06; }
+  if(T('hongi'))  { m.atk*=1.12; m.fortCost*=0.85; }
+  if(T('sinsik')) { m.atk*=1.15; m.upArmy*=0.88; }
+  if(T('jaju'))   { m.atk*=1.22; m.def*=1.18; }
+  if(T('jiphyeon')) m.res*=1.25;
+  if(T('sillok')) { m.legit+=0.5; m.stab+=0.3; }
+  if(T('seoyang')){ m.res*=1.30; m.tech+=1; }
+  if(T('hakgyo')) { m.res*=1.30; m.pop*=1.05; }
+  if(T('yeonso')) { m.res*=1.40; m.tech+=3; }
+
+  /* ── 조약 ── */
+  DIP_NATS.forEach(k=>{
+    const d=dipOf(k); if(!d) return;
+    if(d.tribute){ m.invRisk*=0.55; m.goldMul*=0.96; m.legit-=0.4; }
+    if(d.trade)  { m.exp*=1.5; m.trade*=1.05; }
+    if(d.ally)   { m.invRisk*=0.7; m.stab+=0.3; }
+    if(d.war)    { m.stab-=0.8; m.upArmy*=1.10; }
+  });
+  /* 쇄국은 조약의 이로움을 스스로 닫는다 */
+  if(has('swaeguk')) m.exp*=0.35;
+  /* 방어는 우리 땅에서만 든다 */
+  m.defKor*=m.def;
   return m;
 }
+/* 옛 이름 — 부르던 자리가 여럿이라 남겨 둔다 */
+function polMods(){ return mods(); }
 
 function endTurn(){
   if(G.ended || G.popup || G.report) return;
   const N=G.nations.kor;
-  const B={ gold0:N.gold, food0:N.food, pop0:N.pop, stab0:N.stab,
+  const B={ gold0:N.gold, food0:N.food, pop0:N.pop, stab0:N.stab, legit0:G.legit,
             trade:0, farm:0, upkeepArmy:0, upkeepPay:0, upkeepFort:0,
-            eaten:0, events:[] };
+            eaten:0, export:0, tribute:0, research:0, events:[] };
 
   G.turn++; G.year++;
-  const M=polMods();
+  const M=mods();
 
   /* ── 지방 산출 ── */
-  let food=0, gold=0;
+  let food=0, gold=0, expPot=0;
   Object.values(G.provs).forEach(P=>{
     const T=TERR[P.t];
     const gov=officialAt(P.id);
@@ -575,11 +782,13 @@ function endTurn(){
     // 고을이 커질수록 거두기는 어려워진다 — 그대로 곱하면 후반에 국고가 터진다
     const 규모=Math.pow(P.pop/100000, 0.8);
     let f=P.farm*T.food*(1+govE*0.5)*규모*tagVal(P,'farm',1);
-    let t=P.trade*T.trade*(1+govE*0.6)*규모*tagVal(P,'trade',1);
+    let t=P.trade*T.trade*(1+govE*0.6)*규모*tagVal(P,'trade',1)*goodVal(P,'trade',1);
     if(P.nat==='kor'){
       f*=M.food; t*=M.trade;
       t *= (1 - P.unrest/260);                  // 어지러운 고을은 세가 걷히지 않는다
       food+=f; gold+=t;
+      // 팔 물건 — 조약이 없으면 값이 되지 않는다. 뒤에서 한꺼번에 셈한다.
+      expPot += goodVal(P,'exp',0) * (1+P.trade/44) * 규모;
       // 평시 수비병은 스스로 조금씩 채워진다. 다만 상비군 수준까지만 —
       // 그 위로 불리려면 모병을 해야 하고, 불린 만큼 군량과 녹을 먹는다.
       const 수비=P.pop*0.006*(policyVal('hunryeon')?1.6:1)*tagVal(P,'garrison',1);
@@ -591,15 +800,18 @@ function endTurn(){
       if(tagVal(P,'interest',0)) B.interest=(B.interest||0)+N.gold*tagVal(P,'interest',0);
       // 어지러움이 오래가면 떨어져 나간다.
       // 한 해에 하나까지만 — 나라가 한꺼번에 무너지면 손 쓸 틈이 없다.
-      if(P.unrest>=88){ P.rebel=(P.rebel||0)+1; } else P.rebel=Math.max(0,(P.rebel||0)-1);
-      if(P.rebel>=5 && !P.cap && !B.rebelled){
+      // 조정에 명분이 서 있으면 고을은 조금 더 참는다. 없으면 먼저 등을 돌린다.
+      const 등돌림 = clamp(88 + (G.legit-50)*0.12, 78, 96);
+      const 참는햇수 = G.legit>=72? 6 : G.legit<32? 4 : 5;
+      if(P.unrest>=등돌림){ P.rebel=(P.rebel||0)+1; } else P.rebel=Math.max(0,(P.rebel||0)-1);
+      if(P.rebel>=참는햇수 && !P.cap && !B.rebelled){
         B.rebelled=1;
         P.nat='ind'; P.unrest=40; P.rebel=0; P.army=Math.round(P.army*0.6);
         G.plateDirty=true;
         log(P.nm+'이(가) 조정을 등졌다.');
         B.events.push(P.nm+' 반란');
         N.stab=clamp(N.stab-10,0,100);
-      } else if(P.rebel===3){
+      } else if(P.rebel===참는햇수-2){
         log(P.nm+'의 민심이 심상치 않다. 곧 등을 돌릴 것이다.');
       }
     }
@@ -611,6 +823,13 @@ function endTurn(){
   });
   B.trade=gold; B.farm=food;
 
+  /* ── 수출 ──
+     특산은 안에서도 값을 하지만, 팔 데가 생기면 그때 크게 값을 한다.
+     통상 조약이 없으면 인삼도 비단도 그저 고을의 물건일 뿐이다. */
+  const 통상수 = DIP_NATS.filter(k=>dipOf(k) && dipOf(k).trade && !dipOf(k).war).length;
+  B.export = Math.round(expPot * 통상수 * 1.6 * M.exp);
+  gold += B.export;
+
   /* ── 나감 ──
      시대가 갈수록 나라를 굴리는 값이 비싸진다. 조정 하나로 되던 일이
      부처 열둘이 되고, 성곽 대신 항만과 철도가 된다. */
@@ -620,12 +839,16 @@ function endTurn(){
   B.upkeepFort = natProvs('kor').reduce((a,p)=>a+p.fort*3,0) * 물가;
   // 군량과 백성 몫 — 곡식이 남아돌면 개간도 진휼도 뜻이 없어진다.
   B.eaten      = N.army/1000*4 + N.pop/9500;
-  const upkeep = B.upkeepArmy + B.upkeepPay + B.upkeepFort;
+  /* 세폐 — 조공을 바치는 나라마다 해마다 나간다. 싸구려 평화는 없다. */
+  const 조공국 = DIP_NATS.filter(k=>dipOf(k) && dipOf(k).tribute);
+  B.tribute    = Math.round(조공국.length * (30 + natProvs('kor').length*6) * 물가);
+  B.tributeFood= Math.round(조공국.length * N.pop/90000);
+  const upkeep = B.upkeepArmy + B.upkeepPay + B.upkeepFort + B.tribute;
   B.polDrain   = Math.max(0, Math.round(N.gold*(1-M.goldMul)));   // 정책이 갉아먹는 몫
-  B.interest   = Math.round(B.interest||0);                        // 개성 상인의 이자
+  B.interest   = Math.round((B.interest||0) + N.gold*M.interest); // 개성 상인과 상평통보
 
   N.gold = Math.round(N.gold + gold + B.interest - upkeep - B.polDrain);
-  N.food = Math.round(N.food + food - B.eaten);
+  N.food = Math.round(N.food + food - B.eaten - B.tributeFood);
   /* 곳간에도 한계가 있다. 넘치면 썩는다 — 쌓아 두기만 해서는 안 된다. */
   const 창고 = Math.round(N.pop/60 + natProvs('kor').length*2000);
   if(N.food > 창고){
@@ -640,7 +863,8 @@ function endTurn(){
   /* ── 곳간이 비면 ── */
   if(N.food<0){
     // 모자란 만큼만 아프다. 조금 모자란 해에 나라가 무너져서는 안 된다.
-    const 굶=clamp(-N.food/Math.max(200,B.eaten*0.5), 0, 1);
+    // 구황작물을 심어 두었으면 같은 흉년이 절반만 아프다.
+    const 굶=clamp(-N.food/Math.max(200,B.eaten*0.5), 0, 1)*M.famine;
     log(굶>0.4? '곳간이 비었다. 굶는 고을이 나온다.' : '곳간이 얕다. 봄이 길겠다.');
     if(굶>0.25) B.events.push('기근');
     natProvs('kor').forEach(p=>{ p.unrest=clamp(p.unrest+2+굶*9,0,100);
@@ -665,8 +889,24 @@ function endTurn(){
   const 배치=우리.length? 우리.filter(p=>officialAt(p.id)).length/우리.length : 0;
   // 고을이 주는 몫 — 도읍이 우리 것이면 조정이 서고, 잃으면 흔들린다
   const 고을덕 = 우리.reduce((a,p)=>a+tagVal(p,'stab',0), 0);
-  B.stabIn = (N.food>0? 0.7 : -4) + 배치*0.9 - avgUn*0.045 + (충성-50)*0.012 + M.stab + 고을덕;
+  // 정통 — 조정이 무슨 명분으로 서 있는가. 이제 실제로 민심을 민다.
+  B.stabIn = (N.food>0? 0.7 : -4) + 배치*0.9 - avgUn*0.045 + (충성-50)*0.012
+             + (G.legit-50)*0.020 + M.stab + 고을덕;
   N.stab=clamp(N.stab + B.stabIn, 0, 100);
+
+  /* ── 정통 ──
+     도읍을 쥐고 백성이 편안하면 명분이 절로 선다. 도읍을 잃으면 급히 무너진다.
+     조공은 평화를 사 오지만 그 값을 여기서 치른다. */
+  const 도읍우리 = !!(G.provs.hans && G.provs.hans.nat==='kor');
+  const 명분기준 = clamp(46 + (N.stab-50)*0.35 + (도읍우리? 4 : -26), 5, 95);
+  B.legitIn = clamp((명분기준-G.legit)*0.08, -2.5, 2.5) + M.legit;
+  G.legit = clamp(G.legit + B.legitIn, 0, 100);
+
+  /* ── 연구 ──
+     학문의 고을이 여기서 값을 한다. 오래 쌓아야 마디 하나가 열린다. */
+  B.research = researchGain();
+  G.res.pt = +(G.res.pt + B.research).toFixed(2);
+  G.res.gain = B.research;
 
   /* ── 신하 ──
      충성은 나라 형편을 따라 제자리를 찾아간다. 바닥으로 굴러떨어지지는 않는다. */
@@ -700,8 +940,10 @@ function endTurn(){
     const n=G.officials.filter(o=>o.fac===f && o.post).length;
     G.factions[f]=clamp(G.factions[f] + (n*2.2) - 1.4 + M.facHeat + 열기, 0, 100);
   });
+  // 명분이 얕은 조정에서 사화가 잦다 — 이길 이유가 없으면 이길 사람을 만든다
   const mx=Math.max(...fs.map(f=>G.factions[f]));
-  if(mx>88 && Math.random()<0.25){
+  const 사화확률 = clamp(0.25 + (55-G.legit)*0.005, 0.08, 0.55);
+  if(mx>88 && Math.random()<사화확률){
     const win=fs.find(f=>G.factions[f]===mx);
     const purged=G.officials.filter(o=>o.fac!==win && o.post);
     if(purged.length){
@@ -730,32 +972,62 @@ function endTurn(){
     B.events.push(E.nm);
   }
 
+  dipTurn(B);
   aiTurn(B);
   recalc();
   N.adm=admMax();                                     // 새해의 손
   G.byeol=0;                                          // 별칙은 해가 바뀌면 지워진다
 
-  /* ── 사건 ── */
-  const ev=EVENTS.find(x=>x.y===G.year && !G.evDone[x.y+x.t]);
-  if(ev){ G.evDone[ev.y+ev.t]=1; G.pendingEvent=ev; }
-  else if(Math.random()<0.10) minorEvent(B);
+  /* ── 사건 ──
+     한 해에 두 가지가 걸린 해가 있다(1592년). 예전 코드는 find로 하나만 집어
+     나머지를 영영 버렸다. 이제 줄을 세워 차례로 묻는다. */
+  const evs=EVENTS.filter(x=>x.y===G.year && !G.evDone[x.y+x.t]);
+  if(evs.length){
+    evs.forEach(e=>{ G.evDone[e.y+e.t]=1; });
+    G.evQueue=(G.evQueue||[]).concat(evs);
+    G.pendingEvent=G.evQueue.shift();
+  }
+  else if(Math.random()<0.14) minorEvent(B);
 
   G.report=B;                                          // 연말 결산을 띄운다
   checkEnd();
   saveGame('auto');
 }
 
+/* 작은 일 — 큰 사건 사이를 채운다. 좋기만 하지도, 나쁘기만 하지도 않다. */
 function minorEvent(B){
   const p=pick(natProvs('kor')); if(!p) return;
-  const r=Math.random();
-  if(r<0.3){ p.unrest=clamp(p.unrest+18,0,100); p.farm=Math.max(4,p.farm-2);
+  const N=G.nations.kor, r=Math.random();
+  if(r<0.20){ p.unrest=clamp(p.unrest+18,0,100); p.farm=Math.max(4,p.farm-2);
     log(p.nm+'에 흉년이 들었다.'); B.events.push(p.nm+' 흉년'); }
-  else if(r<0.6){ p.trade+=2; G.plateDirty=true;
+  else if(r<0.36){ p.trade+=2; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true;
     log(p.nm+'의 장이 커졌다.'); B.events.push(p.nm+' 장시 번성'); }
-  else if(r<0.8){ G.pool.push(mkOfficial());
+  else if(r<0.50){ G.pool.push(mkOfficial());
     log('과거에서 인재가 났다.'); B.events.push('과거 급제'); }
-  else { p.pop=Math.round(p.pop*0.96);
+  else if(r<0.62){ p.pop=Math.round(p.pop*0.96); p.unrest=clamp(p.unrest+6,0,100);
     log(p.nm+'에 역병이 돌았다.'); B.events.push(p.nm+' 역병'); }
+  else if(r<0.72){ const g=goodOf(p)||'물건';
+    B.windfall=Math.round(60*(1+G.era*0.9)); N.gold+=B.windfall;
+    log(p.nm+'의 '+g+'이(가) 값을 크게 받았다.'); B.events.push(p.nm+' '+g+' 호황'); }
+  else if(r<0.80){ G.res.pt=+(G.res.pt+8+G.era*4).toFixed(2);
+    log('한 선비가 오래 묻힌 책을 찾아 올렸다.'); B.events.push('고서 발견'); }
+  else if(r<0.88){ const k=pick(DIP_NATS), d=dipOf(k);
+    if(d && !d.war){ d.rel=clamp(d.rel+6,-100,100);
+      log(natName(k)+'의 사신이 예물을 가지고 왔다.'); B.events.push(natName(k)+' 사신'); } }
+  else if(r<0.95){ p.unrest=clamp(p.unrest+14,0,100);
+    log(p.nm+'에서 아전의 농간이 드러났다.'); B.events.push(p.nm+' 탐학'); }
+  else { const o=pick(G.officials);
+    if(o){ o.loy=clamp(o.loy+12,0,100);
+      log(o.nm+'이(가) 사재를 털어 고을을 도왔다.'); B.events.push(o.nm+' 선정'); } }
+}
+
+/* 줄 서 있는 사건을 차례로 꺼낸다.
+   이미 떠 있는 창이 있으면 그것부터 — 시대 알림이 사건에 덮이면 안 된다. */
+function nextEvent(){
+  if(G.popup) return false;
+  if(G.pendingEvent){ G.popup={kind:'choice', ev:G.pendingEvent, y:G.year}; G.pendingEvent=null; return true; }
+  if(G.evQueue && G.evQueue.length){ G.popup={kind:'choice', ev:G.evQueue.shift(), y:G.year}; return true; }
+  return false;
 }
 
 /* 사건 선택지의 효과 */
@@ -770,53 +1042,155 @@ function applyEffects(fx){
   if(fx.legitimacy) G.legit=clamp((G.legit||50)+fx.legitimacy,0,100);
 }
 
+/* ================================================================
+   외교의 한 해
+   ----------------------------------------------------------------
+   사이는 가만두면 제자리로 돌아간다. 조약이 그 제자리를 옮긴다.
+   사이가 무너지면 조약은 저절로 끊어진다 — 종이는 마음을 붙들지 못한다.
+   ================================================================ */
+function relBase(k){
+  const d=dipOf(k); let b=0;
+  if(d.tribute) b+=30;
+  if(d.trade)   b+=14;
+  if(d.ally)    b+=28;
+  if(d.war)     b-=70;
+  if(k==='chn' && policyVal('sadae')) b+=18;
+  if(k==='jpn' && policyVal('gaehwa')) b+=8;
+  if(policyVal('swaeguk')) b-=14;
+  // 큰 나라는 약한 이웃을 낮추어 본다
+  const 힘 = G.nations.kor.army/Math.max(1,G.nations[k].army);
+  b += clamp((힘-1)*12, -10, 12);
+  return clamp(b, -100, 100);
+}
+function dipTurn(B){
+  B.dip=[];
+  DIP_NATS.forEach(k=>{
+    const d=dipOf(k); if(!d) return;
+    if(d.truce>0) d.truce--;
+    if(d.envoy>0) d.envoy--;
+    const 기준=relBase(k);
+    d.rel = clamp(d.rel + clamp((기준-d.rel)*0.10, -6, 6), -100, 100);
+
+    if(d.war){
+      d.warYears++;
+      // 오래 끄는 전쟁은 양쪽을 지치게 한다. 이쪽에서 먼저 손을 내밀 수도 있다.
+      const 지침 = 0.06 + d.warYears*0.03;
+      if(d.warYears>=3 && Math.random()<지침){
+        d.war=false; d.warYears=0; d.truce=8; d.rel=clamp(d.rel+18,-100,100);
+        log(natName(k)+'이(가) 싸움을 거두고 사신을 보내왔다.');
+        B.events.push(natName(k)+'과 휴전');
+      }
+    }
+    /* 종이는 마음을 붙들지 못한다 */
+    if(d.trade && (d.rel<0 || d.war)){ d.trade=false;
+      log(natName(k)+'과의 통상이 끊겼다.'); B.events.push(natName(k)+' 통상 파기'); }
+    if(d.ally && (d.rel<35 || d.war)){ d.ally=false;
+      log(natName(k)+'과의 동맹이 깨졌다.'); B.events.push(natName(k)+' 동맹 파기'); }
+    if(d.tribute && d.war){ d.tribute=false; }
+    B.dip.push({k, rel:Math.round(d.rel), war:d.war});
+  });
+  /* 이웃이 먼저 청해 오는 일 — 사이가 아주 좋으면 동맹을 제안한다 */
+  DIP_NATS.forEach(k=>{
+    const d=dipOf(k);
+    if(d && !d.ally && !d.war && d.rel>=72 && Math.random()<0.10){
+      d.ally=true; d.rel=clamp(d.rel+6,-100,100);
+      log(natName(k)+'이(가) 먼저 손을 내밀어 동맹이 맺어졌다.');
+      B.events.push(natName(k)+'과 동맹');
+    }
+  });
+}
+/* 전쟁을 연다 — 우리가 치거나, 저쪽이 우리를 치거나 */
+function declareWar(k, 우리가){
+  const d=dipOf(k); if(!d || d.war) return;
+  d.war=true; d.warYears=0; d.truce=0;
+  d.rel=clamp(d.rel-45,-100,100);
+  d.trade=false; d.ally=false;
+  if(우리가){
+    G.legit=clamp(G.legit-4,0,100);
+    log(natName(k)+'과(와) 전쟁이 열렸다.');
+  } else {
+    log(natName(k)+'이(가) 군사를 일으켰다.');
+  }
+}
+
 /* ── 다른 나라 ── */
 function aiTurn(B){
-  const M=polMods();
+  const M=mods();
   ['chn','jpn'].forEach(k=>{
     const N=G.nations[k], 내땅=natProvs(k);
     N.gold += 내땅.length*14 + 40;
     // 이웃도 논다. 가만히 두면 조선만 홀로 앞서 나가 견줄 것이 없어진다.
     N.tech = +(N.tech + 0.3 + 0.6*(내땅.length/14) + G.era*0.42).toFixed(1);
     내땅.forEach(p=>{
-      if(Math.random()<0.25){ p.dev++; p.army+=ri(60,240); }
+      if(Math.random()<0.25){ p.dev=Math.min(devCap(),p.dev+1); p.army+=ri(60,240); }
       if(Math.random()<0.30) p.farm =Math.min(devCap(), p.farm +1);
       if(Math.random()<0.24) p.trade=Math.min(devCap(), p.trade+1);
       if(Math.random()<0.06 && p.fort<4+Math.floor(G.era*0.9)) p.fort++;
     });
-    /* 약한 이웃을 문다. 조선도 예외가 아니다 — 종전에는 코드가 조선을 빼 놨다. */
-    const 기세 = 0.04 + (G.era>=1?0.03:0) + (G.era>=3?0.04:0);
+    /* 약한 이웃을 문다. 조선도 예외가 아니다 — 종전에는 코드가 조선을 빼 놨다.
+       다만 이제는 주사위가 아니라 사이를 본다. 형제와는 싸우지 않는다. */
+    const d=dipOf(k);
+    let 기세 = 0.04 + (G.era>=1?0.03:0) + (G.era>=3?0.04:0);
+    if(d && d.war) 기세 += 0.22;
     if(Math.random()<기세){
       const mine=natProvs(k);
       let best=null, bs=0;
       mine.forEach(p=>{
         [...p.adj].forEach(id=>{
           const q=G.provs[id]; if(!q || q.nat===k) return;
+          // 동맹이거나 휴전 중이면 조선을 건드리지 않는다
+          if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
           const T=TERR[q.t];
           let 방어=q.army*T.def*(1+q.fort*0.16)*(1+techOf(q.nat)/220);
-          if(q.nat==='kor') 방어*=M.defKor;                    // 의병·부국강병
-          const 공격=p.army*(1+techOf(k)/220);
-          // 사대교린은 큰 나라의 발길을 늦춘다 (일본은 상관하지 않는다)
-          const 눈치 = (q.nat==='kor' && k==='chn')? M.invRisk : 1;
-          const s=(공격/Math.max(1,방어) + (q.unrest/100) + (q.nat==='kor'? 0.15:0))*눈치;
-          if(공격>방어*1.25 && s>bs){ bs=s; best=[p,q]; }
+          if(q.nat==='kor') 방어*=M.defKor*unitOf(q).def;      // 의병·부국강병·병종
+          const 공격=p.army*(1+techOf(k)/220)*(q.nat==='kor'?1:1);
+          // 사대교린과 세폐는 큰 나라의 발길을 늦춘다
+          const 눈치 = (q.nat==='kor')? M.invRisk : 1;
+          // 사이가 나쁠수록 조선을 먼저 문다. 좋으면 다른 데를 본다.
+          const 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
+          const s=(공격/Math.max(1,방어) + (q.unrest/100) + 미움)*눈치;
+          if(공격>방어*1.25 && s>bs && s>0){ bs=s; best=[p,q]; }
         });
       });
       if(best){
-        const [from,q]=best, 잃음=Math.round(q.army*0.7);
+        const [from,q]=best;
         const old=q.nat;
+        if(old==='kor' && d && !d.war) declareWar(k, false);
         q.nat=k; q.unrest=clamp(q.unrest+40,0,100);
         q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
         G.plateDirty=true;
         log(natName(k)+'이(가) '+q.nm+'을(를) 차지했다.');
         if(old==='kor'){
           G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
+          G.legit=clamp(G.legit-5,0,100);
           if(B) B.events.push(q.nm+' 함락');
           if(q.cap) log('도읍이 넘어갔다.');
+          /* 동맹이 있으면 우리를 문 쪽을 문다 — 동맹의 값어치 */
+          const 벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
+          if(벗) allyStrike(벗, k, B);
         }
       }
     }
   });
+}
+/* 동맹의 보복 — 우리 벗이 우리를 친 나라의 고을 하나를 문다 */
+function allyStrike(friend, foe, B){
+  const mine=natProvs(friend);
+  let best=null, bs=0;
+  mine.forEach(p=>{
+    [...p.adj].forEach(id=>{
+      const q=G.provs[id]; if(!q || q.nat!==foe) return;
+      const s=p.army/Math.max(1,q.army*TERR[q.t].def*(1+q.fort*0.16));
+      if(s>1.1 && s>bs){ bs=s; best=[p,q]; }
+    });
+  });
+  if(!best) return;
+  const [from,q]=best;
+  q.nat=friend; q.unrest=clamp(q.unrest+35,0,100);
+  q.army=Math.round(from.army*0.3); from.army=Math.round(from.army*0.7);
+  G.plateDirty=true;
+  log(natName(friend)+'이(가) 약조대로 '+natName(foe)+'의 '+q.nm+'을(를) 쳤다.');
+  if(B) B.events.push('동맹의 보복');
 }
 
 /* ── 시대 성적 ── */
@@ -829,34 +1203,40 @@ function scoreEra(e){
   const 적인구=Math.max(1, G.nations.chn.pop, G.nations.jpn.pop);
   const 어지=우리.reduce((a,p)=>a+p.unrest,0)/Math.max(1,고을);
   const 도읍=G.provs.hans && G.provs.hans.nat==='kor';
+  const 마디=Object.keys(G.res.done).length;
+  const 벗=DIP_NATS.filter(k=>dipOf(k)&&(dipOf(k).ally||dipOf(k).trade)).length;
   let pt=0;
   pt += 고을*3;                                                  // 최대 48
   pt += Math.round(N.stab/5);                                    // 최대 20
   pt += Math.round(clamp(N.tech/적기술, 0, 1.6)/1.6*34);          // 이웃과 견준 기술
   pt += Math.round(clamp(N.pop/(적인구*0.32), 0, 1.5)/1.5*20);    // 이웃과 견준 인구
+  pt += Math.round(G.legit/6);                                   // 조정이 선 명분, 최대 16
+  pt += 마디*2;                                                   // 열어 둔 기술 마디
+  pt += 벗*4;                                                     // 등지지 않은 이웃
   pt -= Math.round(어지/3);
   if(!도읍) pt -= 30;
   pt = Math.max(0, pt);
-  const 등급 = pt>=100?'상':pt>=72?'중':pt>=44?'하':'난세';
+  const 등급 = pt>=132?'상':pt>=96?'중':pt>=58?'하':'난세';
   G.scores.push({ era:E.nm, y:G.year, pt, 등급, 고을, stab:Math.round(N.stab),
-                  tech:Math.round(N.tech), pop:N.pop });
+                  tech:Math.round(N.tech), pop:N.pop, legit:Math.round(G.legit), 마디 });
+}
+function endGame(title, body){
+  G.ended=true; G.mode='over'; scoreEra(G.era);
+  const tot=G.scores.reduce((a,s)=>a+s.pt,0);
+  const r=pushRecord(title);                        // 최고 기록에 남긴다
+  G.popup={ kind:'end', title, body, y:G.year, total:tot, rank:r.rank };
 }
 function checkEnd(){
+  if(G.ended) return;
   const 도읍=Object.values(G.provs).find(p=>p.cap && p.id==='hans');
   if(도읍 && 도읍.nat!=='kor'){
-    G.ended=true; G.mode='over'; scoreEra(G.era);
-    G.popup={ kind:'end', title:'도읍이 함락되었다', body:'한성을 잃었다. 조정은 흩어졌다.', y:G.year };
-    return;
+    endGame('도읍이 함락되었다','한성을 잃었다. 조정은 흩어졌다.'); return;
   }
   if(natProvs('kor').length===0){
-    G.ended=true; G.mode='over'; scoreEra(G.era);
-    G.popup={ kind:'end', title:'나라가 없어졌다', body:'다스릴 땅이 남지 않았다.', y:G.year };
-    return;
+    endGame('나라가 없어졌다','다스릴 땅이 남지 않았다.'); return;
   }
-  if(G.year>=2025 && !G.ended){
-    G.ended=true; G.mode='over'; scoreEra(G.era);
-    const tot=G.scores.reduce((a,s)=>a+s.pt,0);
-    G.popup={ kind:'end', title:'육백 년', body:'여기까지 왔다.', y:G.year, total:tot };
+  if(G.year>=2025){
+    endGame('육백 년','여기까지 왔다.');
   }
 }
 /* ================================================================
@@ -868,15 +1248,18 @@ function devStep(){ return 3+G.era; }                 // 시대가 오르면 한
 function devCap(){ return 40+G.era*10; }
 const ACTIONS=[
   { id:'gaegan', nm:'개간', cost:80, adm:1, need:p=>p.nat==='kor'&&p.farm<devCap(),
-    desc:p=>'농지 '+p.farm+' → '+Math.min(devCap(),p.farm+devStep())+'. 인구가 더 늘 수 있게 된다.',
-    run:p=>{ p.farm=Math.min(devCap(),p.farm+devStep()); G.plateDirty=true; log(p.nm+'의 농지를 넓혔다.'); } },
+    desc:p=>'농지 '+p.farm+' → '+Math.min(devCap(),p.farm+devStep())+'.  개발 +1. 인구가 더 늘 수 있게 된다.',
+    run:p=>{ p.farm=Math.min(devCap(),p.farm+devStep()); p.dev=Math.min(devCap(),p.dev+1);
+      G.plateDirty=true; log(p.nm+'의 농지를 넓혔다.'); } },
   { id:'sijang', nm:'장을 연다', cost:70, adm:1, need:p=>p.nat==='kor'&&p.trade<devCap(),
     desc:p=>'상업 '+p.trade+' → '+Math.min(devCap(),p.trade+devStep())
-        +'.  연 수입 약 +'+Math.round(devStep()*TERR[p.t].trade*Math.pow(p.pop/100000,0.8))+'전',
-    run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); log(p.nm+'에 장을 열었다.'); } },
+        +'.  연 수입 약 +'+Math.round(devStep()*TERR[p.t].trade*goodVal(p,'trade',1)*Math.pow(p.pop/100000,0.8))+'전'
+        +(goodOf(p)? '  ·  '+goodOf(p)+'을(를) 낸다' : ''),
+    run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); p.dev=Math.min(devCap(),p.dev+1);
+      log(p.nm+'에 장을 열었다.'); } },
   { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
     desc:p=>'성곽 '+p.fort+' → '+(p.fort+1)+'. 방어 +16%, 해마다 유지가 는다.',
-    run:p=>{ p.fort++; G.plateDirty=true; log(p.nm+'의 성을 쌓았다.'); } },
+    run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true; log(p.nm+'의 성을 쌓았다.'); } },
   { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.05,
     desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 5%까지만. 군량을 먹는다.',
     run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/polMods().popMo));
@@ -891,7 +1274,14 @@ const ACTIONS=[
       N.stab=clamp(N.stab+1.5,0,100);
       log(p.nm+'에 곡식 '+num(곡)+'을 풀었다.'); } },
   { id:'gong', nm:'친다', cost:120, adm:2, need:p=>p.nat!=='kor'&&adjToKor(p),
-    desc:p=>'인접한 우리 고을에서 친다. 병력 '+num(p.army)+' 성곽 '+p.fort,
+    /* 눌러 보고 나서야 아는 싸움은 선택이 아니다. 미리 낌새를 보여 준다. */
+    desc:p=>{ const o=warOdds(p);
+      if(!o) return '인접한 우리 고을이 없다.';
+      const d=dipOf(p.nat);
+      return o.from.nm+'의 '+o.U.nm+'로 친다.  이길 낌새 '+Math.round(o.p*100)+'%'
+        + '  ('+num(Math.round(o.atk))+' 대 '+num(Math.round(o.def))+')'
+        + (o.육로? '' : '  · 바닷길')
+        + (d && !d.war? '  ·  '+natName(p.nat)+'과(와) 전쟁이 열린다' : ''); },
     run:p=>{ invade(p); } }
 ];
 function actCost(a,p){
@@ -926,39 +1316,165 @@ const NATIONALS=[
   { id:'chobing', nm:'인재 초빙', adm:1,
     cost:()=>Math.round(160*(1+G.era*0.7)),
     desc:()=>'등용 대기에 사람 둘을 더한다. 지금 '+G.pool.length+'명.',
-    run:()=>{ G.pool.push(mkOfficial(), mkOfficial()); log('널리 사람을 구했다.'); } }
+    run:()=>{ G.pool.push(mkOfficial(), mkOfficial()); log('널리 사람을 구했다.'); } },
+  /* 명분을 세우는 일 — 정통이 실제로 값을 하게 된 뒤에야 뜻이 생겼다 */
+  { id:'jongmyo', nm:'종묘의 예', adm:1,
+    cost:()=>Math.round(180*(1+G.era*1.0)),
+    desc:()=>'정통 '+Math.round(G.legit)+' → '+Math.round(Math.min(100,G.legit+6))
+      +'.  나라 민심 +2.  조정이 무슨 이름으로 서 있는지를 보인다.',
+    run:()=>{ G.legit=clamp(G.legit+6,0,100);
+      G.nations.kor.stab=clamp(G.nations.kor.stab+2,0,100);
+      log('종묘에 제를 올려 조정의 뿌리를 보였다.'); } },
+  /* 국고를 연구로 바꾼다 — 후반에 쌓이기만 하던 돈이 갈 데 하나 더 */
+  { id:'jiwon', nm:'연구 지원', adm:1,
+    cost:()=>Math.round(240*(1+G.era*1.1)),
+    desc:()=>{ const g=Math.round(14+G.era*7);
+      return '연구 '+Math.round(G.res.pt)+' → '+Math.round(G.res.pt+g)+'.  기술 나무의 마디를 여는 데 쓴다.'; },
+    run:()=>{ G.res.pt=+(G.res.pt+14+G.era*7).toFixed(2);
+      log('서적과 기기를 사들여 연구를 도왔다.'); } }
 ];
 function natCost(a){ return typeof a.cost==='function'? a.cost() : a.cost; }
 function adjToKor(p){ return [...p.adj].some(id=>G.provs[id] && G.provs[id].nat==='kor'); }
-function invade(target){
-  const from=[...target.adj].map(id=>G.provs[id]).filter(q=>q&&q.nat==='kor')
-    .sort((a,b)=>b.army-a.army)[0];
-  if(!from){ log('칠 만한 자리가 없다.'); return; }
+/* 침공의 셈 — 화면에 적어 둔 것과 같은 식으로 센다.
+   미리보기(warOdds)와 실제 판정(invade)이 같은 함수를 쓰게 해 두었다.
+   따로 두면 언젠가 반드시 어긋난다. */
+function warPower(from, target){
+  const M=mods();
   const gov=officialAt(from.id);
   const mil=gov? 1+gov.mil/160 : 1;
   // 바다를 건너면 배가 있어야 한다. 경상남도·전라도에서 나가면 수군이 낫다.
   const 육로=[...from.adj].includes(target.id) && !SEA_LINK[from.id+'|'+target.id];
-  const 배 = 육로? 1 : tagVal(from,'navy',0.75);
-  const atk=from.army*mil*(1+tagVal(from,'atk',0))*배
-            *(1+techOf('kor')/220)*rnd(0.85,1.15);
+  const 배 = 육로? 1 : tagVal(from,'navy',0.75)*M.navy;
+  const U=unitOf(from), V=unitOf(target);
+  const atk=from.army*mil*(1+tagVal(from,'atk',0))*배*U.atk*M.atk
+            *(1+techOf('kor')/220);
   const T=TERR[target.t];
-  const def=target.army*T.def*(1+target.fort*0.14)
-            *(1+techOf(target.nat)/220)*rnd(0.9,1.1);
+  const def=target.army*T.def*(1+target.fort*0.14)*V.def
+            *(target.nat==='kor'? M.defKor : 1)
+            *(1+techOf(target.nat)/220);
+  return { atk, def, 육로, U, V };
+}
+function warOdds(target){
+  const from=invadeFrom(target);
+  if(!from) return null;
+  const w=warPower(from,target);
+  return { from, ...w, p:clamp(w.atk/(w.atk+w.def),0,1) };
+}
+function invadeFrom(target){
+  return [...target.adj].map(id=>G.provs[id]).filter(q=>q&&q.nat==='kor')
+    .sort((a,b)=>b.army-a.army)[0] || null;
+}
+function invade(target){
+  const from=invadeFrom(target);
+  if(!from){ log('칠 만한 자리가 없다.'); return; }
+  const 임자=target.nat;
+  // 남의 나라 고을을 치는 것은 곧 전쟁이다. 전에는 아무 일도 아니었다.
+  if(DIP_NATS.includes(임자)) declareWar(임자, true);
+  const w=warPower(from,target);
+  const atk=w.atk*rnd(0.85,1.15), def=w.def*rnd(0.9,1.1);
   const lossA=Math.round(from.army*clamp(def/(atk+def),0.15,0.7));
   const lossD=Math.round(target.army*clamp(atk/(atk+def),0.2,0.85));
   from.army=Math.max(0,from.army-lossA);
   target.army=Math.max(0,target.army-lossD);
   if(atk>def){
-    const old=natName(target.nat);
+    const old=natName(임자);
     target.nat='kor'; target.unrest=clamp(target.unrest+45,0,100); G.plateDirty=true;
     target.army=Math.round(from.army*0.25); from.army=Math.round(from.army*0.75);
-    log(from.nm+'에서 쳐서 '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(lossD)+')');
+    log(from.nm+'의 '+w.U.nm+'이(가) '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
+    G.legit=clamp(G.legit+2,0,100);
   } else {
     log(target.nm+'을(를) 쳤으나 물러났다. (아군 손실 '+num(lossA)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-6,0,100);
+    G.legit=clamp(G.legit-2,0,100);
   }
   recalc();
+}
+
+/* ================================================================
+   외교의 손 — 조정이 이웃에게 하는 일
+   ================================================================ */
+function dipActs(k){
+  const d=dipOf(k), N=G.nations.kor, 물가=1+G.era*0.9;
+  const nm=()=>natName(k);
+  return [
+    { id:'envoy', nm:'사신', adm:1, cost:Math.round(70*물가),
+      can:()=>!!d,
+      desc:()=>{ const g=Math.round(5+bestDip()/9);
+        return '사이 +'+g+'.  외교에 밝은 신하가 있으면 더 오른다 (지금 '+bestDip()+').'; },
+      run:()=>{ const g=5+bestDip()/9;
+        d.rel=clamp(d.rel+g,-100,100); d.envoy=3;
+        log(nm()+'에 사신을 보냈다.'); } },
+    { id:'tribute', nm:d&&d.tribute?'세폐를 거둔다':'세폐를 바친다', adm:1,
+      cost:d&&d.tribute? 0 : Math.round(120*물가),
+      can:()=>!!d && !d.war,
+      desc:()=>d.tribute
+        ? '해마다 나가던 세폐를 그친다.  사이 −18, 정통 +6.'
+        : '해마다 국고와 곡식이 나간다.  사이 +30, 침공 위험이 크게 준다.  정통 −0.4/년.',
+      run:()=>{ if(d.tribute){ d.tribute=false; d.rel=clamp(d.rel-18,-100,100);
+          G.legit=clamp(G.legit+6,0,100); log(nm()+'에 보내던 세폐를 그쳤다.'); }
+        else { d.tribute=true; d.rel=clamp(d.rel+18,-100,100);
+          log(nm()+'에 세폐를 보내기로 하였다.'); } } },
+    { id:'trade', nm:d&&d.trade?'통상을 닫는다':'통상 조약', adm:1,
+      cost:d&&d.trade? 0 : Math.round(160*물가),
+      can:()=>!!d && !d.war && (d.trade || d.rel>=25),
+      desc:()=>d.trade
+        ? '통상을 닫는다.  수출이 그만큼 준다.'
+        : '특산을 판다.  사이 25 이상이라야 한다 (지금 '+Math.round(d.rel)+').'
+          + '  지금 맺으면 해마다 약 '+num(exportGuess(1))+'전.',
+      run:()=>{ d.trade=!d.trade;
+        log(d.trade? nm()+'과 통상을 열었다.' : nm()+'과의 통상을 닫았다.'); } },
+    { id:'ally', nm:d&&d.ally?'동맹을 거둔다':'동맹', adm:2,
+      cost:d&&d.ally? 0 : Math.round(300*물가),
+      can:()=>!!d && !d.war && (d.ally || d.rel>=60),
+      desc:()=>d.ally
+        ? '동맹을 거둔다.  사이 −20.'
+        : '사이 60 이상이라야 한다 (지금 '+Math.round(d.rel)+').'
+          + '  우리를 치지 않고, 우리를 친 쪽을 문다.',
+      run:()=>{ if(d.ally){ d.ally=false; d.rel=clamp(d.rel-20,-100,100);
+          log(natName(k)+'과의 동맹을 거두었다.'); }
+        else { d.ally=true; d.rel=clamp(d.rel+10,-100,100);
+          log(natName(k)+'과 동맹을 맺었다.'); } } },
+    { id:'peace', nm:'화친', adm:2, cost:Math.round(260*물가),
+      can:()=>!!d && d.war,
+      desc:()=>'싸움을 끝낸다.  국고를 치르고 정통 −5.  여덟 해 동안 다시 치지 않는다.',
+      run:()=>{ d.war=false; d.warYears=0; d.truce=8;
+        d.rel=clamp(d.rel+25,-100,100);
+        G.legit=clamp(G.legit-5,0,100);
+        log(natName(k)+'과 화친하였다.'); } },
+    { id:'denounce', nm:'국서로 꾸짖는다', adm:1, cost:Math.round(40*물가),
+      can:()=>!!d && !d.ally,
+      desc:()=>'사이 −14.  다른 이웃과의 사이 +8, 정통 +3.  명분은 값이 싸지 않다.',
+      run:()=>{ d.rel=clamp(d.rel-14,-100,100);
+        const o=DIP_NATS.find(x=>x!==k); if(o&&dipOf(o)) dipOf(o).rel=clamp(dipOf(o).rel+8,-100,100);
+        G.legit=clamp(G.legit+3,0,100);
+        log(natName(k)+'에 국서를 보내 꾸짖었다.'); } }
+  ];
+}
+/* 통상을 하나 더 열면 해마다 얼마가 들어오는지 — 어림이라도 보여 준다 */
+function exportGuess(add){
+  const M=mods();
+  let pot=0;
+  natProvs('kor').forEach(P=>{
+    pot += goodVal(P,'exp',0)*(1+P.trade/44)*Math.pow(P.pop/100000,0.8);
+  });
+  const 지금 = DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).trade&&!dipOf(k).war).length;
+  return Math.max(0, Math.round(pot*(지금+add)*1.6*M.exp) - Math.round(pot*지금*1.6*M.exp));
+}
+
+/* ================================================================
+   기술 마디를 연다
+   ================================================================ */
+function unlockTech(t){
+  if(techDone(t.id)){ log('이미 열린 마디요.'); return; }
+  if(G.era<t.era){ log('아직 이를 다룰 때가 아니오.'); return; }
+  const prev=techPrev(t);
+  if(prev && !techDone(prev.id)){ log(prev.nm+'을(를) 먼저 이루어야 하오.'); return; }
+  if(G.res.pt < t.cost){ log('연구가 모자라오.'); return; }
+  G.res.pt = +(G.res.pt - t.cost).toFixed(2);
+  G.res.done[t.id]=G.year;
+  G.nations.kor.tech = +(G.nations.kor.tech + 4 + G.era*1.5).toFixed(1);
+  log('「'+t.nm+'」을(를) 이루었다.');
 }
 
 /* ================================================================
@@ -1002,6 +1518,52 @@ function bar(g,x,y,w,h,v,col){
   g.fillStyle=col; g.fillRect(x,y,w*clamp(v,0,1),h);
   g.strokeStyle='rgba(224,189,118,.22)'; g.lineWidth=1; g.strokeRect(x+.5,y+.5,w-1,h-1);
 }
+/* 가운데가 0인 막대 — 사이(친교)처럼 음수가 있는 값에 쓴다 */
+function bar2(g,x,y,w,h,v,col){
+  g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(x,y,w,h);
+  const mid=x+w/2, t=clamp(v,-1,1)*w/2;
+  g.fillStyle=col; g.fillRect(t<0? mid+t : mid, y, Math.abs(t), h);
+  g.strokeStyle='rgba(224,189,118,.35)'; g.lineWidth=1;
+  g.beginPath(); g.moveTo(mid+.5,y); g.lineTo(mid+.5,y+h); g.stroke();
+  g.strokeStyle='rgba(224,189,118,.22)'; g.strokeRect(x+.5,y+.5,w-1,h-1);
+}
+/* 작은 표 — 조약 · 상태를 이름표로 붙인다 */
+function chip(g,x,y,t,col){
+  g.font='10px serif';
+  const w=g.measureText(t).width+12;
+  g.fillStyle='rgba(0,0,0,.35)'; g.fillRect(x,y,w,15);
+  g.strokeStyle=col; g.lineWidth=1; g.strokeRect(x+.5,y+.5,w-1,14);
+  g.fillStyle=col; g.fillText(t, x+6, y+11);
+  return w+5;
+}
+/* ── 값 치르기 ──
+   정무가 남으면 정무로, 다 썼으면 별칙으로 국고를 태운다.
+   여러 화면에서 같은 규칙을 쓰므로 한 곳에 모아 둔다. */
+function quote(admCost, baseCost){
+  const N=G.nations.kor, 손=(N.adm||0)>=admCost, 별칙=!손;
+  const c=Math.round(baseCost*(별칙? byeolMul() : 1));
+  return { 별칙, c, 돈:N.gold>=c, ok:N.gold>=c && !G.ended };
+}
+function pay(q, admCost, fn){
+  const N=G.nations.kor;
+  N.gold-=q.c;
+  if(q.별칙) byeolPay(); else N.adm-=admCost;
+  fn(); recalc();
+}
+/* 명령 단추 한 줄 — 이름·값·정무를 함께 그린다 */
+function actBtn(g,x,y,w,h,label,admCost,baseCost,ok,fn,tip){
+  const q=quote(admCost, baseCost);
+  const can=ok&&q.ok;
+  btn(g,x,y,w,h,label, q.별칙&&can, can? ()=>pay(q,admCost,fn) : null, !can);
+  g.font='9px serif'; g.textAlign='right';
+  g.fillStyle= !can? 'rgba(90,86,80,.5)' : (q.별칙?'rgba(196,140,74,.95)':'rgba(224,189,118,.75)');
+  g.fillText((q.c? num(q.c)+'전 · ' : '') + (q.별칙? '별칙 x'+byeolMul().toFixed(1) : '정무 '+admCost),
+             x+w, y+h+10);
+  g.textAlign='left';
+  if(inRect(Mouse,{x,y,w,h}) && tip)
+    G.tip = tip + (ok? (q.돈? '' : '  · 국고가 모자란다') : '  · 지금은 할 수 없다');
+  return q;
+}
 
 function draw(){
   const g=ctx;
@@ -1029,11 +1591,20 @@ function drawTop(g){
   g.fillStyle='rgba(16,18,24,.96)'; g.fillRect(0,0,CFG.W,54);
   g.strokeStyle='rgba(190,158,96,.35)'; g.beginPath(); g.moveTo(0,54.5); g.lineTo(CFG.W,54.5); g.stroke();
   g.textAlign='left'; g.fillStyle='#e0bd76'; g.font='22px serif';
-  g.fillText(G.year+'년', 16, 34);
+  g.fillText(G.year+'년', 16, 30);
   g.fillStyle='#c9bfa8'; g.font='14px serif';
-  g.fillText(ERAS[G.era].nm, 92, 34);
-  g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
-  g.fillText('v'+VERSION, 92, 48);
+  g.fillText(ERAS[G.era].nm, 96, 30);
+  // 전쟁 중이면 연호 아래에 붉게 적는다 — 잊고 지나갈 수 있는 일이 아니다
+  const 싸움=DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).war);
+  if(싸움.length){
+    g.fillStyle='#c4534a'; g.font='11px serif';
+    g.fillText('전쟁 · '+싸움.map(natName).join(' · '), 16, 47);
+    if(inRect(Mouse,{x:12,y:36,w:180,h:16}))
+      G.tip='싸움이 길어지면 민심이 깎이고 군 유지비가 오른다. 외교 판에서 화친을 청할 수 있다.';
+  } else {
+    g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
+    g.fillText('v'+VERSION, 16, 47);
+  }
 
   const items=[
     ['국고', num(N.gold), '#e0bd76'],
@@ -1052,10 +1623,17 @@ function drawTop(g){
     g.fillStyle=c; g.font='16px serif'; g.fillText(v, tx, 42);
     x=tx+Math.max(96, g.measureText(v).width+40);
   });
-  // 민심
-  g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif'; g.fillText('민심', x, 22);
-  bar(g,x,28,110,12, N.stab/100, N.stab<35?'#c4534a':'#8fa86a');
-  g.fillStyle='#cfc7b6'; g.font='11px serif'; g.fillText(Math.round(N.stab)+'', x+116, 38);
+  // 민심과 정통 — 둘 다 판정에 들어가므로 둘 다 늘 보여야 한다
+  const 눈금=(label,v,col,by)=>{
+    g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText(label, x, by+8);
+    bar(g, x+30, by, 72, 9, v/100, col);
+    g.fillStyle='#cfc7b6'; g.font='10px serif'; g.fillText(Math.round(v)+'', x+108, by+8);
+  };
+  눈금('민심', N.stab, N.stab<35?'#c4534a':'#8fa86a', 14);
+  눈금('정통', G.legit, G.legit<35?'#c4534a':'#b79fe0', 32);
+  if(inRect(Mouse,{x:x,y:10,w:132,h:36}))
+    G.tip='민심은 고을을 잡아 두고, 정통은 조정을 잡아 둔다. '
+        + '정통이 낮으면 사화가 잦고 고을이 먼저 등을 돌린다.';
   // 메뉴
   btn(g, CFG.W-78, 14, 64, 26, '메뉴', false, ()=>{ MENU={tab:null}; });
   if(inRect(Mouse,{x:CFG.W-78,y:14,w:64,h:26})) G.tip='저장 · 불러오기 · 새로 시작 · 나가기  (Esc)';
@@ -1443,7 +2021,7 @@ function drawMap(g){
 }
 
 /* 오른쪽 패널 */
-const TABS=['국정','신하','정책','기록'];
+const TABS=['국정','외교','기술','신하','정책','기록'];
 const SCROLL={};                 // 탭마다 굴린 만큼 기억한다
 function drawSide(g){
   const x=CFG.GX+CFG.GW*CFG.CELL+10, y=CFG.GY, w=CFG.W-x-8, h=CFG.H-y-8;
@@ -1468,6 +2046,8 @@ function drawSide(g){
   g.save();
   g.beginPath(); g.rect(x+2, cy-10, w-4, ch+10); g.clip();
   const 끝 = (G.tab==='국정')? sideState(g,cx,cy-sc,cw)
+           : (G.tab==='외교')? sideDiplomacy(g,cx,cy-sc,cw)
+           : (G.tab==='기술')? sideTech(g,cx,cy-sc,cw)
            : (G.tab==='신하')? sideOfficials(g,cx,cy-sc,cw)
            : (G.tab==='정책')? sidePolicy(g,cx,cy-sc,cw)
            :                   sideLog(g,cx,cy-sc,cw);
@@ -1681,6 +2261,128 @@ function togglePolicy(P){
   if(P.id==='chagwan'){ N.gold+=400; log('차관을 들여왔다. 국고에 400전이 들어왔다.'); }
   log(P.nm+'을(를) 시행한다.');
 }
+/* ── 외교 ──
+   이웃이 둘뿐이라 화면도 둘로 나뉜다. 사이 하나, 조약 넷, 그리고 값. */
+function sideDiplomacy(g,x,y,w){
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('외교', x, y+12);
+  g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+  g.fillText('사이가 무너지면 조약은 저절로 끊어진다.', x, y+28);
+  let yy=y+52;
+
+  DIP_NATS.forEach(k=>{
+    const d=dipOf(k); if(!d) return;
+    const NA=NATIONS[k];
+    /* 이름과 사이 */
+    g.fillStyle=NA.col; g.fillRect(x, yy-11, 3, 14);
+    g.fillStyle='#e8e1d1'; g.font='15px serif'; g.fillText(natName(k), x+10, yy);
+    g.font='12px serif'; g.textAlign='right';
+    g.fillStyle=relCol(d.rel);
+    g.fillText(relName(d.rel)+'  '+(d.rel>0?'+':'')+Math.round(d.rel), x+w, yy);
+    g.textAlign='left';
+    bar2(g, x, yy+8, w, 10, d.rel/100, relCol(d.rel));
+    if(inRect(Mouse,{x:x,y:yy+8,w:w,h:10}))
+      G.tip='사이는 가만두면 '+Math.round(relBase(k))+' 쪽으로 돌아간다. 조약과 정책이 그 자리를 옮긴다.';
+
+    /* 조약 표 */
+    let cx2=x, cy2=yy+24;
+    if(d.war)     cx2+=chip(g,cx2,cy2,'전쟁','#c4534a');
+    if(d.truce>0) cx2+=chip(g,cx2,cy2,'휴전 '+d.truce+'년','#9fd0e8');
+    if(d.tribute) cx2+=chip(g,cx2,cy2,'세폐','#c9a24a');
+    if(d.trade)   cx2+=chip(g,cx2,cy2,'통상','#8fa86a');
+    if(d.ally)    cx2+=chip(g,cx2,cy2,'동맹','#b79fe0');
+    if(cx2===x){ g.fillStyle='rgba(110,105,98,.8)'; g.font='10px serif';
+      g.fillText('맺은 것 없음', x, cy2+11); }
+
+    /* 외교의 손 */
+    const acts=dipActs(k);
+    const colW=(w-8)/2;
+    let by=yy+46;
+    acts.forEach((a,i)=>{
+      const bx=x+(i%2)*(colW+8), row=Math.floor(i/2);
+      const yb=by+row*42;
+      actBtn(g, bx, yb, colW, 26, a.nm, a.adm, a.cost, a.can(), a.run, a.desc());
+    });
+    yy = by + Math.ceil(acts.length/2)*42 + 22;
+  });
+
+  /* 값 — 조약이 해마다 얼마를 벌고 얼마를 먹는지 */
+  divider(g,x,yy-10,w); yy+=6;
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('해마다', x, yy); yy+=20;
+  const 통상수=DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).trade&&!dipOf(k).war).length;
+  const 조공수=DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).tribute).length;
+  const 물가=1+G.era*0.8;
+  /* 실제로 들어온 값은 결산이 안다. 여기서는 지금 상태의 어림을 보인다. */
+  const 지금수출 = (()=>{ const M=mods(); let pot=0;
+    natProvs('kor').forEach(P=>{ pot+=goodVal(P,'exp',0)*(1+P.trade/44)*Math.pow(P.pop/100000,0.8); });
+    return Math.round(pot*통상수*1.6*M.exp); })();
+  const 세폐액 = Math.round(조공수*(30+natProvs('kor').length*6)*물가);
+  const line=(k2,v,col)=>{
+    g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif'; g.fillText(k2, x, yy);
+    g.fillStyle=col||'#e8e1d1'; g.textAlign='right'; g.fillText(v, x+w, yy); g.textAlign='left';
+    yy+=17;
+  };
+  line('수출', 통상수? '+'+num(지금수출)+' 전' : '통상 없음', 통상수?'#8fa86a':'rgba(110,105,98,.8)');
+  line('세폐', 조공수? '−'+num(세폐액)+' 전' : '없음', 조공수?'#c4534a':'rgba(110,105,98,.8)');
+  if(!통상수){
+    g.fillStyle='rgba(150,145,135,.65)'; g.font='10px serif';
+    g.fillText('통상을 하나 열면 해마다 약 '+num(exportGuess(1))+'전.', x, yy); yy+=16;
+  }
+  g.fillStyle='rgba(150,145,135,.65)'; g.font='10px serif';
+  g.fillText('사신에 밝은 신하 — 가장 높은 외교 '+bestDip(), x, yy);
+  return yy+18;
+}
+
+/* ── 기술 나무 ── */
+function sideTech(g,x,y,w){
+  const R=G.res;
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('기술', x, y+12);
+  g.font='12px serif'; g.textAlign='right';
+  g.fillStyle='#b79fe0'; g.fillText('연구 '+num(R.pt), x+w, y+12); g.textAlign='left';
+  g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+  g.fillText('해마다 +'+researchGain().toFixed(1)+'.  학문의 고을과 민심이 연구를 민다.', x, y+28);
+  let yy=y+50;
+
+  Object.keys(TECH_BRANCH).forEach(br=>{
+    const BR=TECH_BRANCH[br];
+    g.fillStyle=BR.col; g.font='13px serif'; g.fillText(BR.nm, x, yy);
+    g.fillStyle='rgba(140,135,125,.7)'; g.font='10px serif';
+    g.fillText(BR.note, x+40, yy);
+    yy+=8;
+    TECHS.filter(t=>t.br===br).forEach(t=>{
+      const done=techDone(t.id), open=techOpen(t);
+      const rowH= done? 26 : (open? 42 : 26);
+      if(done){
+        g.fillStyle='rgba(143,168,106,.10)'; g.fillRect(x-4,yy,w+8,rowH-2);
+        g.fillStyle=BR.col; g.font='12px serif'; g.fillText('● '+t.nm, x+2, yy+16);
+        g.fillStyle='rgba(130,125,115,.75)'; g.font='10px serif'; g.textAlign='right';
+        g.fillText(G.res.done[t.id]+'년', x+w, yy+16); g.textAlign='left';
+      } else if(open){
+        const 살수=R.pt>=t.cost && !G.ended;
+        const hov=inRect(Mouse,{x:x-4,y:yy,w:w+8,h:rowH-2});
+        if(hov&&살수){ g.fillStyle='rgba(190,150,80,.14)'; g.fillRect(x-4,yy,w+8,rowH-2); }
+        g.fillStyle= 살수? '#e8e1d1' : '#8b8377'; g.font='12px serif';
+        g.fillText('○ '+t.nm, x+2, yy+15);
+        g.fillStyle= 살수? '#b79fe0' : 'rgba(120,115,105,.8)'; g.font='11px serif';
+        g.textAlign='right'; g.fillText('연구 '+t.cost, x+w, yy+15); g.textAlign='left';
+        g.fillStyle='rgba(143,168,106,.9)'; g.font='10px serif';
+        g.fillText('＋ '+t.good, x+12, yy+30);
+        if(살수) hz(x-4,yy,w+8,rowH-2, ()=>{ unlockTech(t); });
+        if(hov) G.tip = 살수? ('「'+t.nm+'」 — 연구 '+t.cost+'을 들여 연다.')
+                            : ('연구가 '+Math.ceil(t.cost-R.pt)+' 모자란다. 해마다 +'+researchGain().toFixed(1)
+                               +' 이니 '+Math.ceil((t.cost-R.pt)/Math.max(0.1,researchGain()))+'해쯤 걸린다.');
+      } else {
+        g.fillStyle='rgba(70,66,60,.75)'; g.font='11px serif';
+        const prev=techPrev(t);
+        const why = G.era<t.era? (ERAS[t.era].nm+' 이후') : (prev? prev.nm+' 다음' : '');
+        g.fillText('· '+t.nm+'  — '+why, x+2, yy+15);
+      }
+      yy+=rowH;
+    });
+    yy+=14;
+  });
+  return yy;
+}
+
 function sideLog(g,x,y,w){
   g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('기록', x, y+12);
   let yy=y+34;
@@ -1715,9 +2417,27 @@ function drawBottom(g){
     g.fillText(gov? ('수령 '+gov.nm) : '수령 없음', x+120, y+44);
     // 고을의 개성 — 이름 옆에 표를 달고, 자세한 것은 짚으면 나온다
     const TG=tagOf(P);
+    g.font='18px serif';
+    let nx=x+24+g.measureText(P.nm).width+10;
+    // 특산 — 이 고을이 내는 물건
+    const GD=goodOf(P);
+    if(GD){
+      g.font='12px serif';
+      const bw3=g.measureText(GD).width+14;
+      g.fillStyle='rgba(120,150,110,.20)'; g.fillRect(nx, y+14, bw3, 18);
+      g.strokeStyle='rgba(143,168,106,.55)'; g.lineWidth=1; g.strokeRect(nx+.5, y+14.5, bw3-1, 17);
+      g.fillStyle='#8fa86a'; g.fillText(GD, nx+7, y+27);
+      if(inRect(Mouse,{x:nx,y:y+14,w:bw3,h:18})){
+        const gd=GOODS[GD];
+        const 팔곳=DIP_NATS.filter(k=>dipOf(k)&&dipOf(k).trade&&!dipOf(k).war).length;
+        G.tip = gd.note + '   장사 +'+Math.round((gd.trade-1)*100)+'%'
+          + (P.nat==='kor'
+              ? (팔곳? '  ·  통상을 맺은 '+팔곳+'곳에 판다' : '  ·  팔 데가 없다 — 통상 조약을 맺으면 값이 된다')
+              : '');
+      }
+      nx+=bw3+6;
+    }
     if(TG){
-      g.font='18px serif';
-      const nx=x+24+g.measureText(P.nm).width+10;
       g.font='12px serif';
       const bw2=g.measureText(TG.nm).width+14;
       g.fillStyle='rgba(190,150,80,.22)'; g.fillRect(nx, y+14, bw2, 18);
@@ -1737,13 +2457,15 @@ function drawBottom(g){
         G.tip = TG.note + (조각.length? '   ' + 조각.join(' · ') : '');
       }
     }
-    // 수치
+    // 수치 — 이름표가 길어져도 겹치지 않게 이름표 너비도 함께 잰다
     let sx=x+230;
     [['인구',num(P.pop)],['개발',P.dev],['농지',P.farm],['상업',P.trade],
-     ['성곽',P.fort],['병력',num(P.army)]].forEach(([k,v])=>{
-      g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText(k, sx, y+22);
-      g.fillStyle='#e8e1d1'; g.font='14px serif'; g.fillText(v+'', sx, y+40);
-      sx+=Math.max(64, g.measureText(v+'').width+26);
+     ['성곽',P.fort],['병력 · '+unitOf(P).nm,num(P.army)]].forEach(([k,v])=>{
+      g.font='10px serif'; const lw=g.measureText(k).width;
+      g.fillStyle='rgba(150,145,135,.75)'; g.fillText(k, sx, y+22);
+      g.font='14px serif'; const vw=g.measureText(v+'').width;
+      g.fillStyle='#e8e1d1'; g.fillText(v+'', sx, y+40);
+      sx+=Math.max(64, Math.max(vw,lw)+26);
     });
     g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif'; g.fillText('민심', sx, y+22);
     bar(g,sx,y+28,80,10, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
@@ -1800,45 +2522,66 @@ function drawBottom(g){
 function drawReport(g){
   const B=G.report, N=G.nations.kor;
   g.fillStyle='rgba(4,5,8,.74)'; g.fillRect(0,0,CFG.W,CFG.H);
-  const w=560,h=390,x=(CFG.W-w)/2,y=(CFG.H-h)/2;
+  /* 창 높이는 담을 것에 맞춘다 — 빈 판을 크게 띄워 둘 까닭이 없다 */
+  const evN=Math.min(4, B.events.length);
+  const h = 286 + (B.dip&&B.dip.length? 25:0)
+          + (B.events.length? 31+evN*16+(B.events.length>4?14:0) : 0) + 66;
+  const w=600, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   bigPanel(g,x,y,w,h);
   g.textAlign='center';
-  g.fillStyle='#e0bd76'; g.font='22px serif'; g.fillText(G.year+'년 결산', CFG.W/2, y+44);
+  g.fillStyle='#e0bd76'; g.font='22px serif'; g.fillText(G.year+'년 결산', CFG.W/2, y+42);
   g.textAlign='left';
-  const 든=Math.round(B.trade), 난=Math.round(B.upkeepArmy+B.upkeepPay+B.upkeepFort+(B.polDrain||0));
-  let yy=y+80;
+  const 든=Math.round(B.trade), 난=Math.round(B.upkeepArmy+B.upkeepPay+B.upkeepFort
+                                             +(B.tribute||0)+(B.polDrain||0));
+  let yy=y+74;
   const row=(k,v,col,sub)=>{
-    g.fillStyle='rgba(150,145,135,.85)'; g.font='12px serif'; g.fillText(k, x+38, yy);
+    g.fillStyle='rgba(150,145,135,.85)'; g.font='12px serif'; g.fillText(k, x+34, yy);
     g.fillStyle=col||'#e8e1d1'; g.font='15px serif'; g.textAlign='right';
-    g.fillText(v, x+w-160, yy); g.textAlign='left';
-    if(sub){ g.fillStyle='rgba(130,125,115,.8)'; g.font='10px serif'; g.fillText(sub, x+w-150, yy); }
-    yy+=26;
+    g.fillText(v, x+w-186, yy); g.textAlign='left';
+    if(sub){ g.fillStyle='rgba(130,125,115,.8)'; g.font='10px serif'; g.fillText(sub, x+w-178, yy); }
+    yy+=25;
   };
-  row('세입', '+'+num(든), '#8fa86a', '상업과 장시');
+  row('세입', '+'+num(든), '#8fa86a',
+      '장시 '+num(든-(B.export||0)) + (B.export? ' · 수출 '+num(B.export) : '')
+      + (B.interest? ' · 이자 '+num(B.interest) : ''));
   row('세출', '−'+num(난), '#c4534a',
       '군 '+num(B.upkeepArmy)+' · 녹봉 '+num(B.upkeepPay)+' · 성곽 '+num(B.upkeepFort)
+      + (B.tribute? ' · 세폐 '+num(B.tribute) : '')
       + (B.polDrain? ' · 정책 '+num(B.polDrain) : ''));
-  const 순=든-난;
+  const 순=N.gold-B.gold0;
   row('국고', num(N.gold)+'  ('+(순>=0?'+':'')+num(순)+')', 순>=0?'#e0bd76':'#c4534a');
-  yy+=6; divider(g,x+38,yy-8,w-76); yy+=10;
+  yy+=4; divider(g,x+34,yy-8,w-68); yy+=8;
   row('곡식', num(N.food)+'  ('+(Math.round(B.farm-B.eaten)>=0?'+':'')+num(B.farm-B.eaten)+')',
       N.food>0?'#8fbf6a':'#c4534a',
-      '거둠 '+num(B.farm)+' · 먹음 '+num(B.eaten)+(B.spoil?' · 썩음 '+num(B.spoil):''));
+      '거둠 '+num(B.farm)+' · 먹음 '+num(B.eaten)
+      +(B.tributeFood?' · 세폐 '+num(B.tributeFood):'')+(B.spoil?' · 썩음 '+num(B.spoil):''));
   row('인구', num(N.pop)+'  ('+(N.pop-B.pop0>=0?'+':'')+num(N.pop-B.pop0)+')', '#9fd0e8');
   row('민심', Math.round(N.stab)+'  ('+(N.stab-B.stab0>=0?'+':'')+(N.stab-B.stab0).toFixed(1)+')',
       N.stab<35?'#c4534a':'#8fa86a',
       '수령 '+natProvs('kor').filter(p=>officialAt(p.id)).length+'/'+natProvs('kor').length
       +' · 어지러움 '+Math.round(natProvs('kor').reduce((a,p)=>a+p.unrest,0)/Math.max(1,natProvs('kor').length)));
-  row('기술', N.tech.toFixed(1), '#b79fe0');
+  row('정통', Math.round(G.legit)+'  ('+((G.legit-(B.legit0!=null?B.legit0:G.legit))>=0?'+':'')
+      +(G.legit-(B.legit0!=null?B.legit0:G.legit)).toFixed(1)+')',
+      G.legit<35?'#c4534a':'#b79fe0');
+  row('기술', N.tech.toFixed(1), '#b79fe0',
+      '연구 '+num(G.res.pt)+'  (+'+(B.research||0).toFixed(1)+'/년)'
+      + ' · 마디 '+Object.keys(G.res.done).length+'/'+TECHS.length);
+  /* 이웃과의 사이 — 한 줄로 */
+  if(B.dip && B.dip.length){
+    const s=B.dip.map(d=>natName(d.k)+' '+(d.war?'전쟁':((d.rel>0?'+':'')+d.rel))).join('   ');
+    row('이웃', '', '#c9bfa8', s);
+  }
   if(B.events.length){
-    yy+=4; divider(g,x+38,yy-8,w-76); yy+=12;
-    g.fillStyle='#e0bd76'; g.font='12px serif'; g.fillText('그해의 일', x+38, yy); yy+=18;
+    yy+=2; divider(g,x+34,yy-8,w-68); yy+=12;
+    g.fillStyle='#e0bd76'; g.font='12px serif'; g.fillText('그해의 일', x+34, yy); yy+=17;
     g.fillStyle='#c9bfa8'; g.font='12px serif';
-    B.events.slice(0,4).forEach(e=>{ g.fillText('· '+e, x+46, yy); yy+=16; });
+    B.events.slice(0,4).forEach(e=>{ g.fillText('· '+e, x+42, yy); yy+=16; });
+    if(B.events.length>4){ g.fillStyle='rgba(130,125,115,.8)'; g.font='10px serif';
+      g.fillText('그 밖에 '+(B.events.length-4)+'가지', x+42, yy); }
   }
   btn(g, CFG.W/2-70, y+h-46, 140, 30, '다음 해로', false, ()=>{
     G.report=null;
-    if(G.pendingEvent){ G.popup={kind:'choice', ev:G.pendingEvent, y:G.year}; G.pendingEvent=null; }
+    nextEvent();
   });
 }
 
@@ -1870,11 +2613,14 @@ function drawChoice(g){
     g.fillStyle= hov?'#f0e2be':'#c9bfa8'; g.font='14px serif';
     g.fillText((i+1)+'.  '+c.t, x+44, by+24);
     // 효과 미리보기
+    // 효과 미리보기 — 국고·곡식·군사는 몫(%)이고 민심·기술·정통은 눈금이다.
+    // 예전에는 둘을 똑같이 적어 두어 '국고 -4'가 4전인지 4%인지 알 수 없었다.
     g.font='10px serif'; let ex=x+44;
     const 이름={gold:'국고',food:'곡식',stab:'민심',tech:'기술',army:'군사',legitimacy:'정통'};
+    const 몫={gold:1,food:1,army:1};
     Object.entries(c.e||{}).forEach(([k,v])=>{
       g.fillStyle= v>0? 'rgba(143,168,106,.95)':'rgba(196,83,74,.95)';
-      const s=이름[k]+' '+(v>0?'+':'')+v;
+      const s=(이름[k]||k)+' '+(v>0?'+':'')+v+(몫[k]?'%':'');
       g.fillText(s, ex, by+44); ex+=g.measureText(s).width+14;
     });
     hz(x+30,by,w-60,bh, ()=>{
@@ -1933,9 +2679,16 @@ function drawPopup(g){
   g.fillText(P.title, CFG.W/2, y+76);
   g.fillStyle='#e8e1d1'; g.font='14px serif';
   wrapText(g,P.body,w-90).slice(0,2).forEach((t,i)=> g.fillText(t, CFG.W/2, y+108+i*20));
+  if(끝 && P.rank){
+    g.fillStyle= P.rank===1? '#e0bd76':'rgba(160,155,145,.9)'; g.font='12px serif';
+    g.fillText(P.rank===1? '기록에서 으뜸이다' : ('기록에서 '+P.rank+'째'), CFG.W/2, y+136);
+  }
   g.textAlign='left';
-  if(끝) drawScores(g, x+60, y+152, w-120);
-  btn(g, CFG.W/2-70, y+h-46, 140, 30, 끝?'끝':'알겠다', false, ()=>{ G.popup=null; });
+  if(끝) drawScores(g, x+60, y+160, w-120);
+  const 남은 = (G.evQueue? G.evQueue.length : 0) + (G.pendingEvent?1:0);
+  btn(g, CFG.W/2-70, y+h-46, 140, 30,
+      끝? '끝' : (남은? '다음 일로' : '알겠다'), false,
+      ()=>{ G.popup=null; nextEvent(); });
 }
 function drawTip(g){
   if(!G.tip) return;
@@ -1961,10 +2714,12 @@ function packSave(){
     provs:{}, nations:G.nations, officials:G.officials, pool:G.pool,
     factions:G.factions, policies:G.policies, polSince:G.polSince,
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
-    log:G.log.slice(0,60), ev:{} };
+    /* 예전 판이 흘리던 것들 — 다시 불러오면 사라져 있던 상태 */
+    evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
+    res:G.res, dip:G.dip, byeol:G.byeol, tab:G.tab, sel:G.sel, view:G.view,
+    log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
-    farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army}; });
-  Object.keys(G).filter(k=>k.startsWith('ev_')).forEach(k=>d.ev[k]=1);
+    farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0}; });
   // 칸 목록에 보여줄 요약
   d.sum={ y:G.year, era:ERAS[G.era].nm, prov:natProvs('kor').length,
           pop:G.nations.kor.pop, gold:G.nations.kor.gold, ended:!!G.ended };
@@ -1995,13 +2750,47 @@ function loadGame(slot){
     G.polSince=d.polSince||{}; G.scores=d.scores||[]; G.ended=!!d.ended;
     if(d.legit!=null) G.legit=d.legit;
     if(d.usedPeople) G.usedPeople=d.usedPeople;
+    /* 사건·연구·외교 — 예전에는 이것들이 저장되지 않아 불러오면 처음으로 돌아갔다 */
+    G.evDone=d.evDone||{}; G.evQueue=d.evQueue||[]; G.pendingEvent=d.pendingEvent||null;
+    if(d.res) G.res={ pt:d.res.pt||0, done:d.res.done||{}, gain:d.res.gain||0 };
+    if(d.dip) DIP_NATS.forEach(k=>{ if(d.dip[k]) Object.assign(G.dip[k], d.dip[k]); });
+    G.byeol=d.byeol||0;
+    if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
+    if(d.view) G.view=d.view;
+    if(d.sel && d.sel in G.provs) G.sel=d.sel;
     Object.entries(d.provs).forEach(([k,v])=>{ if(G.provs[k]) Object.assign(G.provs[k],v); });
-    Object.keys(d.ev||{}).forEach(k=>G[k]=1);
     recalc(); G.plateDirty=true;
     return true;
   }catch(e){ return false; }
 }
 function hasAnySave(){ return SLOTS.some(s=>!!slotInfo(s)); }
+
+/* ================================================================
+   기록 — 끝난 판만 남는다
+   ----------------------------------------------------------------
+   세이브는 버전이 바뀌면 버려지지만, 기록은 남는다.
+   어느 판에서 어디까지 갔는지는 규칙이 바뀌어도 뜻이 있다.
+   ================================================================ */
+function loadRecords(){
+  try{ const a=JSON.parse(localStorage.getItem(CFG.RECORDS)||'[]'); return Array.isArray(a)?a:[]; }
+  catch(e){ return []; }
+}
+function pushRecord(how){
+  const tot=G.scores.reduce((a,s)=>a+s.pt,0);
+  let at='';
+  try{ at=new Date().toISOString().slice(0,10); }catch(e){}
+  const r={ ver:VERSION, y:G.year, how, total:tot, at,
+            prov:natProvs('kor').length, era:ERAS[G.era].nm,
+            legit:Math.round(G.legit), tech:Math.round(G.nations.kor.tech),
+            node:Object.keys(G.res.done).length };
+  const all=loadRecords();
+  all.push(r);
+  all.sort((a,b)=> b.total-a.total || a.y-b.y);
+  const top=all.slice(0,10);
+  try{ localStorage.setItem(CFG.RECORDS, JSON.stringify(top)); }catch(e){}
+  return { rank: top.indexOf(r)+1, top };
+}
+function clearRecords(){ try{ localStorage.removeItem(CFG.RECORDS); }catch(e){} }
 
 /* ================================================================
    화면 — 제목 / 놀이 / 메뉴
@@ -2049,6 +2838,10 @@ function drawTitle(g){
   });
   y+=56;
   btn(g,bx,y,bw,44,'불러오기',false,()=>{ MENU={tab:'load', from:'title'}; });
+  y+=56;
+  const recs=loadRecords();
+  btn(g,bx,y,bw,44, recs.length? ('기록  ·  으뜸 '+recs[0].total+'점') : '기록',
+      false, ()=>{ MENU={tab:'records', from:'title'}; });
   y+=64;
 
   g.textAlign='center';
@@ -2120,11 +2913,54 @@ function drawSlots(g, mode){
   });
 }
 
+/* 최고 기록 */
+function drawRecords(g){
+  const recs=loadRecords();
+  const w=600, h=460, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  g.fillStyle='rgba(4,5,8,.82)'; g.fillRect(0,0,CFG.W,CFG.H);
+  bigPanel(g,x,y,w,h);
+  g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='22px serif';
+  g.fillText('기록', CFG.W/2, y+44);
+  g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif';
+  g.fillText('끝난 판만 남는다. 판이 바뀌어도 지워지지 않는다.', CFG.W/2, y+64);
+  g.textAlign='left';
+  let yy=y+94;
+  if(!recs.length){
+    g.fillStyle='rgba(110,105,98,.9)'; g.font='13px serif'; g.textAlign='center';
+    g.fillText('아직 끝까지 간 판이 없다.', CFG.W/2, yy+40); g.textAlign='left';
+  }
+  recs.forEach((r,i)=>{
+    const rh=30;
+    if(i%2===0){ g.fillStyle='rgba(255,255,255,.025)'; g.fillRect(x+28,yy-14,w-56,rh); }
+    g.fillStyle= i===0?'#e0bd76':'rgba(150,145,135,.85)'; g.font='13px serif';
+    g.fillText((i+1)+'.', x+36, yy+4);
+    g.fillStyle='#e8e1d1'; g.font='14px serif';
+    g.fillText(String(r.total)+'점', x+62, yy+4);
+    g.fillStyle='rgba(160,155,145,.9)'; g.font='11px serif';
+    g.fillText(r.y+'년 · '+(r.how||''), x+134, yy+4);
+    g.fillStyle='rgba(130,125,115,.8)'; g.font='10px serif'; g.textAlign='right';
+    g.fillText('고을 '+r.prov+' · 정통 '+(r.legit!=null?r.legit:'-')
+               +' · 마디 '+(r.node!=null?r.node:'-')
+               +(r.at? '   '+r.at : ''), x+w-36, yy+4);
+    g.textAlign='left';
+    yy+=rh;
+  });
+  btn(g, CFG.W/2-140, y+h-46, 120, 30, '돌아간다', false, ()=>{
+    MENU = (MENU && MENU.from==='title')? null : { tab:null };
+    if(SCENE==='title') MENU=null;
+  });
+  if(recs.length) btn(g, CFG.W/2+20, y+h-46, 120, 30, '기록 지우기', false, ()=>{
+    확인('기록 지우기','남은 기록이 모두 사라진다.','지운다',
+      ()=>{ clearRecords(); MENU={tab:'records', from:MENU&&MENU.from}; });
+  });
+}
+
 /* 놀이 중 메뉴 */
 function drawMenu(g){
   if(MENU && MENU.confirm){ drawConfirm(g); return; }
+  if(MENU && MENU.tab==='records'){ drawRecords(g); return; }
   if(MENU && MENU.tab){ drawSlots(g, MENU.tab); return; }
-  const w=300, h=340, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=300, h=390, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.78)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='20px serif';
@@ -2136,6 +2972,7 @@ function drawMenu(g){
   btn(g,bx,yy,bw,38,'돌아가기',false,()=>{ MENU=null; }); yy+=46;
   btn(g,bx,yy,bw,38,'저장하기',false,()=>{ MENU={tab:'save'}; }); yy+=46;
   btn(g,bx,yy,bw,38,'불러오기',false,()=>{ MENU={tab:'load'}; }); yy+=46;
+  btn(g,bx,yy,bw,38,'기록',false,()=>{ MENU={tab:'records'}; }); yy+=46;
   btn(g,bx,yy,bw,38,'새로 시작',false,()=>{
     확인('새로 시작','지금 판은 사라진다. 남겨 두려면 먼저 저장하시오.','시작한다',()=>{ 새판(); });
   }); yy+=46;
@@ -2170,6 +3007,14 @@ function tick(){
   if(Key.pressed['Space'] && !창 && !G.ended && SCENE==='play'){ Key.pressed['Space']=false; endTurn(); }
   if(Key.pressed['KeyM'] && !창 && SCENE==='play'){
     Key.pressed['KeyM']=false; G.mapMode=G.mapMode==='terrain'?'political':'terrain';
+  }
+  // 오른쪽 판이 여섯 갈래가 되었으니 손으로도 넘길 수 있어야 한다
+  if(!창 && SCENE==='play'){
+    const 넘김=d=>{ const i=TABS.indexOf(G.tab); G.tab=TABS[(i+d+TABS.length)%TABS.length]; };
+    if(Key.pressed['BracketLeft']){ Key.pressed['BracketLeft']=false; 넘김(-1); }
+    if(Key.pressed['BracketRight']){ Key.pressed['BracketRight']=false; 넘김(1); }
+    if(Key.pressed['Tab']){ Key.pressed['Tab']=false;
+      넘김(Key.down['ShiftLeft']||Key.down['ShiftRight']? -1 : 1); }
   }
   if(Key.pressed['Escape']){ Key.pressed['Escape']=false;
     if(MENU){
