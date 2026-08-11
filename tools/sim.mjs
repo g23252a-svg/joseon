@@ -231,6 +231,16 @@ function uiCheck(){
   shot('메뉴', () => { G.popup = null; api.ev("MENU={tab:null};"); });
   shot('저장 칸', () => api.ev("MENU={tab:'save'};"));
   shot('놀이 중 기록', () => api.ev("MENU={tab:'records'};"));
+  shot('소리 설정', () => api.ev("MENU={tab:'sound'};"));
+  shot('제목 · 소리 설정', () => api.ev("SCENE='title'; MENU={tab:'sound', from:'title'};"));
+  shot('싸움 효과가 떠 있는 지도', () => {
+    api.ev("SCENE='play'; MENU=null;");
+    G.popup = null; G.report = null;
+    api.call('fxBattle', G.provs['pyab'], G.provs['liao'], true, 1200, 3400);
+    api.call('fxFlip', G.provs['jeon'], 'chn', '전라도 반란', '#c4534a');
+    api.call('fxPop', 'hans', '개간', '#8fbf6a');
+    api.call('fxTick', 0.3);
+  });
   shot('확인 창', () => api.ev("MENU={confirm:{title:'시험',body:'시험',ok:'한다',fn:function(){}}};"));
 
   /* 외교·기술이 실제로 맺어진 상태에서도 그려져야 한다 */
