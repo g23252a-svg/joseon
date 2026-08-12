@@ -366,6 +366,39 @@ function snapshot(G){
 /* ---------------------------------------------------------------- 두는 법 */
 /* 사람이 두는 흉내를 낸다. 잘 두는 판과 못 두는 판이 실제로 갈리는지 본다. */
 
+/* 판 위의 군을 다루는 손 — '정복'과 '밀어붙임'이 함께 쓴다.
+   군대 층이 생긴 뒤로는 이 손 없이는 어느 계획도 성을 하나도 못 뺏는다. */
+function 군을부린다(api, 문턱){
+  const G = api.get('G');
+  const ACTIONS = api.get('ACTIONS');
+  const gong = ACTIONS.find(a => a.id === 'gong');
+  /* ① 세워 둔 군을 가장 무른 이웃 성으로 */
+  (G.armies||[]).filter(a => a.nat === 'kor').forEach(A => {
+    if(A.dest) return;
+    const P = G.provs[A.at]; if(!P || P.nat !== 'kor') return;
+    let best = null, bs = -1e9;
+    [...P.adj].forEach(id => {
+      const q = G.provs[id]; if(!q || q.nat === 'kor') return;
+      const 힘 = api.call('armyAtk', A) / Math.max(1, api.call('provDef', q, A));
+      if(힘 < 0.72) return;
+      if(힘 > bs){ bs = 힘; best = q; }
+    });
+    if(best) api.call('orderMove', A, best.id);
+  });
+  /* ② 셀 만큼 모였으면 군을 낸다 */
+  let guard = 0;
+  while(guard++ < 12){
+    const 후보 = api.call('natProvs','kor')
+      .filter(p => gong.need(p) && api.call('raisable', p) >= (문턱 || 7000)
+                && [...p.adj].some(id => G.provs[id] && G.provs[id].nat !== 'kor'))
+      .sort((a,b) => api.call('raisable', b) - api.call('raisable', a));
+    if(!후보.length) break;
+    const q = api.call('actQuote', gong, 후보[0]);
+    if(!q.ok) break;
+    api.call('pay', q, gong.adm, () => gong.run(후보[0]));
+  }
+}
+
 const PLANS = {
   /* 아무것도 하지 않는다 — 넘기기만 */
   idle: {
@@ -497,18 +530,11 @@ const PLANS = {
             N.gold -= c; N.adm -= jin.adm; jin.run(hot); api.call('recalc'); continue;
           }
         }
-        /* 이길 낌새가 좋은 곳을 친다 */
-        let best = null, bp = 0;
-        Object.values(G.provs).forEach(p => {
-          if(!gong.need(p)) return;
-          const o = api.call('warOdds', p);
-          if(o && o.p > bp){ bp = o.p; best = p; }
-        });
-        if(best && bp > 0.62){
-          const q = api.call('actQuote', gong, best);
-          if(q.ok){ api.call('pay', q, gong.adm, () => gong.run(best)); continue; }
-        }
-        /* 못 이길 것 같으면 군사를 불린다 */
+        /* 군을 부린다 — 세우고 움직인다 */
+        const 전=(G.armies||[]).length;
+        군을부린다(api, 8000);
+        if((G.armies||[]).length>전) continue;
+        /* 그러고도 남으면 군사를 불린다 */
         const mine = api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop);
         if(!mine.length || (N.adm||0) < mo.adm) break;
         const p = mine[0], q = api.call('actQuote', mo, p);
@@ -536,16 +562,10 @@ const PLANS = {
         api.call('pay', q, act.adm, () => act.run(p));
         return true;
       };
+      군을부린다(api, 7000);
+      /* 남은 정무로 국경에 군사를 채운다 */
       let guard = 0;
-      while(guard++ < 60){
-        let best = null, bp = 0;
-        Object.values(G.provs).forEach(p => {
-          if(!gong.need(p)) return;
-          const o = api.call('warOdds', p);
-          if(o && o.p > bp){ bp = o.p; best = p; }
-        });
-        if(best && bp > 0.50){ if(지른다(gong, best)) continue; }
-        /* 못 이길 것 같으면 국경 고을에 군사를 몰아넣는다 */
+      while(guard++ < 40){
         const 국경 = api.call('natProvs','kor')
           .filter(p => mo.need(p) && [...p.adj].some(id => G.provs[id] && G.provs[id].nat !== 'kor'))
           .sort((a,b) => b.pop - a.pop);
@@ -683,6 +703,8 @@ function runOne(planKey, seed){
   const total = G.scores.reduce((a, s) => a + s.pt, 0);
   return {
     year, total, peak, y30, yAll, cjWars, cjWarY, cjAllyY, cjFirst,
+    chul:(G.saga&&G.saga.did.chul)||0, taken:(G.saga&&G.saga.taken)||0,
+    lostP:(G.saga&&G.saga.lost)||0, fields:(G.saga&&G.saga.fields)||0,
     scores: G.scores.map(s => `${s.era} ${s.pt}(${s.등급})`),
     prov: api.call('natProvs','kor').length,
     ended: !!G.ended,
@@ -733,7 +755,9 @@ for(const k of keys){
       peak: avg(r => r.peak),
       y30: got30.length ? Math.round(got30.reduce((s,r)=>s+r.y30,0)/got30.length) + '년' : '—',
       done: rows.filter(r => r.year >= 2025).length + '/' + rows.length,
-      cjWars: avg(r => r.cjWars), cjWarY: avg(r => r.cjWarY), cjAllyY: avg(r => r.cjAllyY)
+      cjWars: avg(r => r.cjWars), cjWarY: avg(r => r.cjWarY), cjAllyY: avg(r => r.cjAllyY),
+      chul: avg(r => r.chul), taken: avg(r => r.taken),
+      lostP: avg(r => r.lostP), fields: avg(r => r.fields)
     });
   }
 }
@@ -744,6 +768,14 @@ summary.forEach(s => {
   console.log(`${s.nm.padEnd(12)} ${String(s.year).padStart(8)} ${String(s.total).padStart(11)} ` +
               `${String(s.prov).padStart(11)} ${String(s.peak).padStart(11)} ` +
               `${String(s.y30).padStart(8)} ${s.done.padStart(7)}`);
+});
+
+/* 군 — 판 위의 군대가 실제로 도는지 */
+console.log('\n── 군 ──');
+console.log('두는 법        출정(번)   빼앗은 고을   잃은 고을   야전(번)');
+summary.forEach(s => {
+  console.log(`${s.nm.padEnd(12)} ${String(s.chul).padStart(7)} ${String(s.taken).padStart(11)} ` +
+              `${String(s.lostP).padStart(11)} ${String(s.fields).padStart(10)}`);
 });
 
 /* 이웃끼리 — 이 층이 실제로 도는지 */
