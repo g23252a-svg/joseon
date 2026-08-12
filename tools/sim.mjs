@@ -336,13 +336,14 @@ function saveCheck(){
 }
 function snapshot(G){
   return {
-    year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol,
+    year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol, saheWait:G.saheWait,
     tab:G.tab, sel:G.sel, view:G.view, mapMode:G.mapMode, mapFocus:G.mapFocus,
     mapZoom:G.mapZoom, mapPan:G.mapPan,
     policies:G.policies, polSince:G.polSince, factions:G.factions,
     scores:G.scores, evDone:G.evDone,
     '연구':{ pt:G.res.pt, done:G.res.done },
     '외교':G.dip,
+    '이웃끼리':G.cj,
     '국고':G.nations.kor.gold, '식량':G.nations.kor.food, '기술':G.nations.kor.tech,
     '신하':G.officials.map(o=>o.nm+':'+o.post+':'+Math.round(o.loy)).sort(),
     '고을':Object.entries(G.provs).map(([k,p])=>
@@ -563,6 +564,23 @@ const PLANS = {
         if(d.rel < 30) use('envoy');
       }
     }
+  },
+  /* 이간 — 남을 붙여 놓고 그 틈에 민다.
+     '밀어붙임'과 같은 손을 쓰되, 이웃끼리 손을 잡으려 하면 먼저 벌려 놓는다.
+     새로 놓은 층에 정말 대응할 수 있는지, 그 값이 되는지를 재기 위한 두는 법이다. */
+  wedge: {
+    nm: '이간질',
+    play(api){
+      const G = api.get('G'), N = G.nations.kor, C = G.cj;
+      /* 이웃이 손을 잡을 낌새면 먼저 벌린다 — 명령보다 앞선다 */
+      if(C){
+        const a = api.call('cjActs').find(x => x.id === 'wedge');
+        if(a && a.can() && (N.adm||0) >= a.adm && N.gold >= a.cost*2 && C.rel > -30){
+          N.gold -= a.cost; N.adm -= a.adm; a.run();
+        }
+      }
+      PLANS.rush.play(api);
+    }
   }
 };
 
@@ -592,6 +610,9 @@ function runOne(planKey, seed){
   let year = G.year, guard = 0;
   /* 언제 얼마나 먹었는지 — 정복이 너무 쉬운지 재는 눈금 */
   let peak = 0, y30 = null, yAll = null;
+  /* 이웃끼리의 사이 — 명과 일본이 서로 얼마나 붙고 얼마나 손을 잡는지.
+     조선만 보는 눈으로는 이 층이 도는지 알 수가 없다. */
+  let cjWars = 0, cjWarY = 0, cjAllyY = 0, cjWas = false, cjFirst = null;
   while(!G.ended && G.year < 2025 && guard++ < 900){
     try { plan.play(api); }
     catch(e){ return { err: '두는 중 오류: ' + e.message + '\n' + e.stack, year: G.year }; }
@@ -609,6 +630,12 @@ function runOne(planKey, seed){
     }
     if(G.popup && G.popup.kind !== 'end') G.popup = null;
 
+    const C = G.cj;
+    if(C){
+      if(C.war){ cjWarY++; if(!cjWas){ cjWars++; if(cjFirst==null) cjFirst=G.year; } }
+      cjWas = C.war;
+      if(C.ally) cjAllyY++;
+    }
     const np = api.call('natProvs','kor').length;
     if(np > peak) peak = np;
     if(y30 === null && np >= 30) y30 = G.year;
@@ -626,7 +653,7 @@ function runOne(planKey, seed){
   const N = G.nations.kor;
   const total = G.scores.reduce((a, s) => a + s.pt, 0);
   return {
-    year, total, peak, y30, yAll,
+    year, total, peak, y30, yAll, cjWars, cjWarY, cjAllyY, cjFirst,
     scores: G.scores.map(s => `${s.era} ${s.pt}(${s.등급})`),
     prov: api.call('natProvs','kor').length,
     ended: !!G.ended,
@@ -676,7 +703,8 @@ for(const k of keys){
       year: avg(r => r.year), total: avg(r => r.total), prov: avg(r => r.prov),
       peak: avg(r => r.peak),
       y30: got30.length ? Math.round(got30.reduce((s,r)=>s+r.y30,0)/got30.length) + '년' : '—',
-      done: rows.filter(r => r.year >= 2025).length + '/' + rows.length
+      done: rows.filter(r => r.year >= 2025).length + '/' + rows.length,
+      cjWars: avg(r => r.cjWars), cjWarY: avg(r => r.cjWarY), cjAllyY: avg(r => r.cjAllyY)
     });
   }
 }
@@ -687,6 +715,14 @@ summary.forEach(s => {
   console.log(`${s.nm.padEnd(12)} ${String(s.year).padStart(8)} ${String(s.total).padStart(11)} ` +
               `${String(s.prov).padStart(11)} ${String(s.peak).padStart(11)} ` +
               `${String(s.y30).padStart(8)} ${s.done.padStart(7)}`);
+});
+
+/* 이웃끼리 — 이 층이 실제로 도는지 */
+console.log('\n── 명과 일본 사이 ──');
+console.log('두는 법        서로 전쟁(번)   전쟁으로 보낸 해   서로 동맹한 해');
+summary.forEach(s => {
+  console.log(`${s.nm.padEnd(12)} ${String(s.cjWars).padStart(10)} ` +
+              `${String(s.cjWarY).padStart(15)} ${String(s.cjAllyY).padStart(14)}`);
 });
 
 if(bad){ console.error(`\n${bad}판이 터졌다.`); process.exit(1); }

@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -85,6 +85,15 @@ function 이가(w){ return 받침(w)? '이':'가'; }
 function 은는(w){ return 받침(w)? '은':'는'; }
 function 을를(w){ return 받침(w)? '을':'를'; }
 function 과와(w){ return 받침(w)? '과':'와'; }
+/* '으로'만은 받침 하나로 갈리지 않는다 — ㄹ 받침은 '로'를 쓴다.
+   '서울으로'가 아니라 '서울로'다. */
+function 으로(w){
+  if(!w) return '로';
+  const c=w.charCodeAt(w.length-1);
+  if(c<0xAC00||c>0xD7A3) return '로';
+  const 끝=(c-0xAC00)%28;
+  return (끝===0||끝===8)? '로' : '으로';
+}
 
 /* ---------------------------------------------------------------- 입력 */
 const Key={pressed:{},down:{}};
@@ -864,7 +873,7 @@ function newGame(){
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
       evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
-      res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0 };
+      res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0 };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -961,6 +970,10 @@ function newGame(){
     chn:{ rel: 25, tribute:false, trade:false, ally:false, war:false, warYears:0, truce:0, envoy:0 },
     jpn:{ rel:-10, tribute:false, trade:false, ally:false, war:false, warYears:0, truce:0, envoy:0 }
   };
+  /* 이웃끼리의 사이 — 조선만 남과 사이가 있는 것이 아니다.
+     명과 일본도 서로를 본다. 그 둘이 맞붙어 있는 동안이 조선의 숨 돌릴 틈이고,
+     둘이 손을 잡으면 조선은 사이에 끼인다. */
+  G.cj={ rel:-18, war:false, warYears:0, truce:0, ally:false, trade:false, mediate:0 };
   /* 붕당 */
   // 세력은 조정 자리의 몫이다 — 처음에는 고르게 나눈다 (합이 늘 100)
   FACTION_SETS[0].forEach((f,_,a)=>{ G.factions[f]=100/a.length; });
@@ -1190,7 +1203,7 @@ function endTurn(){
         else P.assim=Math.max(0,(P.assim||0)-0.5);
         if((P.assim||0)>=ASSIM_YEARS){
           P.home='kor'; P.assim=ASSIM_YEARS;
-          log(P.nm+'이(가) 이제 조선 땅으로 여겨진다.');
+          log(P.nm+이가(P.nm)+' 이제 조선 땅으로 여겨진다.');
           B.events.push(P.nm+' 편입');
           fxPop(P.id, P.nm+' 편입', '#8fa86a'); snd('treaty');
         }
@@ -1209,8 +1222,8 @@ function endTurn(){
         const 돌아갈곳 = (!isCore(P) && P.home!=='kor' && G.nations[P.home])? P.home : 'ind';
         P.nat=돌아갈곳; P.unrest=40; P.rebel=0; P.assim=0; P.army=Math.round(P.army*0.6);
         G.plateDirty=true;
-        log(돌아갈곳==='ind'? (P.nm+'이(가) 조정을 등졌다.')
-                            : (P.nm+'이(가) '+natName(돌아갈곳)+'으로 돌아섰다.'));
+        log(돌아갈곳==='ind'? (P.nm+이가(P.nm)+' 조정을 등졌다.')
+                            : (P.nm+이가(P.nm)+' '+natName(돌아갈곳)+으로(natName(돌아갈곳))+' 돌아섰다.'));
         fxFlip(P, 'kor', P.nm+' 반란', '#c4534a'); shake(0.7); snd('revolt');
         B.events.push(P.nm+' 반란');
         N.stab=clamp(N.stab-10,0,100);
@@ -1331,8 +1344,8 @@ function endTurn(){
       let heir=G.officials.find(x=>!x.post);
       if(!heir){ heir=G.pool.shift()||mkOfficial(); G.officials.push(heir); }
       heir.post=seat;
-      log(o.nm+'이(가) 늙어 물러나고, '+heir.nm+'이(가) '+G.provs[seat].nm+'을(를) 잇는다.');
-    } else log(o.nm+'이(가) 벼슬을 내려놓았다.');
+      log(o.nm+이가(o.nm)+' 늙어 물러나고, '+heir.nm+이가(heir.nm)+' '+G.provs[seat].nm+을를(G.provs[seat].nm)+' 잇는다.');
+    } else log(o.nm+이가(o.nm)+' 벼슬을 내려놓았다.');
   });
   if(G.pool.length<6) G.pool.push(mkOfficial());
   while(G.officials.length < natProvs('kor').length + 2){
@@ -1362,17 +1375,25 @@ function endTurn(){
   const mx=Math.max(...fs.map(f=>G.factions[f]));
   const 사화문턱 = 고름 + 22;                       // 고른 몫보다 한참 앞선 당이 있을 때
   const 사화확률 = clamp(0.22 + (55-G.legit)*0.005, 0.06, 0.50);
-  if(mx>사화문턱 && Math.random()<사화확률){
+  /* 사화는 한 시대에 서너 번 있었던 일이지 해마다 있던 일이 아니다.
+     문턱만 두었더니 자리가 기울어 있는 동안 해마다 터져, 로그가 사화로 덮이고
+     이름이 오르내리는 것이 아무 뜻도 없게 되었다. 한 번 터지면 쉬어 간다. */
+  if(G.saheWait>0) G.saheWait--;
+  if(mx>사화문턱 && !G.saheWait && Math.random()<사화확률){
     const win=fs.find(f=>G.factions[f]===mx);
     const purged=G.officials.filter(o=>o.fac!==win && o.post);
     if(purged.length){
       const v=pick(purged), seat=v.post;
       v.post=null; v.loy=clamp(v.loy-25,0,100);
-      let heir=G.officials.find(o=>o.fac===win&&!o.post)||G.officials.find(o=>!o.post);
+      G.saheWait=ri(7,13);
+      /* 쫓겨난 사람이 그 자리를 도로 맡는 일은 없다 —
+         v 는 방금 post 를 놓았으므로 '자리 없는 사람'에 걸려들었다. */
+      let heir=G.officials.find(o=>o!==v&&o.fac===win&&!o.post)
+             ||G.officials.find(o=>o!==v&&!o.post);
       if(!heir){ heir=G.pool.shift()||mkOfficial(); heir.fac=win; G.officials.push(heir); }
       heir.post=seat;
-      log('사화가 일어났다. '+win+'이 조정을 잡고 '+v.nm+'이(가) 쫓겨났다. '
-          +G.provs[seat].nm+'은(는) '+heir.nm+'이(가) 맡는다.');
+      log('사화가 일어났다. '+win+이가(win)+' 조정을 잡고 '+v.nm+이가(v.nm)+' 쫓겨났다. '
+          +G.provs[seat].nm+은는(G.provs[seat].nm)+' '+heir.nm+이가(heir.nm)+' 맡는다.');
       B.events.push('사화');
       N.stab=clamp(N.stab-8,0,100);
     }
@@ -1390,9 +1411,21 @@ function endTurn(){
     log('── '+E.nm+' ──  '+E.desc);
     snd('era'); MUS.next=0;                      // 시대가 바뀌면 가락도 바뀐다
     B.events.push(E.nm);
+    /* 왜란은 조선만의 싸움이 아니었다. 명이 군사를 냈고, 그 뒤로
+       두 나라 사이는 오래 틀어져 있었다. 판에도 그대로 얹는다. */
+    if(E.nm==='임진왜란' && G.cj){
+      G.cj.rel=clamp(G.cj.rel-55,-100,100); G.cj.wedge=(G.cj.wedge||0)-20;
+      G.cj.ally=false; G.cj.trade=false; G.cj.truce=0;
+      if(!G.cj.war && dipOf('jpn') && dipOf('jpn').war){
+        G.cj.war=true; G.cj.warYears=0;
+        log(natName('chn')+이가(natName('chn'))+' 군사를 내어 '+natName('jpn')+과와(natName('jpn'))+' 맞섰다.');
+        B.events.push('명·일본 전쟁');
+      }
+    }
   }
 
   dipTurn(B);
+  cjTurn(B);
   aiTurn(B);
   recalc();
   N.adm=admMax();                                     // 새해의 손
@@ -1445,7 +1478,7 @@ function minorEvent(B){
     log(p.nm+'에 역병이 돌았다.'); B.events.push(p.nm+' 역병'); }
   else if(r<0.72){ const g=goodOf(p)||'물건';
     B.windfall=Math.round(60*(1+G.era*0.9)); N.gold+=B.windfall;
-    log(p.nm+'의 '+g+'이(가) 값을 크게 받았다.'); B.events.push(p.nm+' '+g+' 호황'); }
+    log(p.nm+'의 '+g+이가(g)+' 값을 크게 받았다.'); B.events.push(p.nm+' '+g+' 호황'); }
   else if(r<0.80){ G.res.pt=+(G.res.pt+8+G.era*4).toFixed(2);
     log('한 선비가 오래 묻힌 책을 찾아 올렸다.'); B.events.push('고서 발견'); }
   else if(r<0.88){ const k=pick(DIP_NATS), d=dipOf(k);
@@ -1455,7 +1488,7 @@ function minorEvent(B){
     log(p.nm+'에서 아전의 농간이 드러났다.'); B.events.push(p.nm+' 탐학'); }
   else { const o=pick(G.officials);
     if(o){ o.loy=clamp(o.loy+12,0,100);
-      log(o.nm+'이(가) 사재를 털어 고을을 도왔다.'); B.events.push(o.nm+' 선정'); } }
+      log(o.nm+이가(o.nm)+' 사재를 털어 고을을 도왔다.'); B.events.push(o.nm+' 선정'); } }
 }
 
 /* 줄 서 있는 사건을 차례로 꺼낸다.
@@ -1513,6 +1546,82 @@ function relBase(k){
   if(d.ally) b=Math.max(b, 46);
   return clamp(b, -100, 100);
 }
+
+/* ================================================================
+   명과 일본 사이
+   ----------------------------------------------------------------
+   여태 사이라는 것은 조선이 남을 보는 눈 하나뿐이었다. 명과 일본은
+   서로 땅을 뺏고 뺏기면서도 아무 사이가 없었다. 그래서 판이 늘
+   '조선 대 둘'로만 굴러갔고, 조선이 할 수 있는 일도 둘 중 하나를
+   달래는 것뿐이었다.
+
+   이제 그 둘에게도 사이가 있다. 서로 싸우는 동안은 조선을 덜 보고,
+   손을 잡으면 조선이 사이에 낀다. 조선은 그 사이를 벌릴 수도 있고
+   (이간) 말릴 수도 있다(중재). 벌리는 쪽이 값이 싸고, 말리는 쪽이
+   명분을 남긴다.
+   ================================================================ */
+function cjOf(){ return G.cj; }
+function cjBase(){
+  const C=G.cj; if(!C) return 0;
+  let b=-14;
+  // 시대가 갈수록 둘은 같은 바다에서 부딪친다
+  b -= G.era*4;
+  if(C.trade) b+=16;
+  if(C.ally)  b=Math.max(b, 44);
+  if(C.war)   b-=60;
+  // 서로 제 땅을 쥐고 있으면 원수다
+  b -= natProvs('chn').filter(p=>p.home==='jpn').length*8;
+  b -= natProvs('jpn').filter(p=>p.home==='chn').length*8;
+  // 조선이 한쪽과 형제가 되면 다른 쪽은 그 한쪽을 더 미워한다
+  DIP_NATS.forEach(k=>{ const d=dipOf(k); if(d && d.ally) b-=12; });
+  // 둘 다 조선과 싸우는 중이면 뜻이 맞는다
+  if(DIP_NATS.every(k=>dipOf(k)&&dipOf(k).war)) b+=26;
+  /* 조선이 커지면 두 나라가 손을 잡는다.
+     여태 크게 먹은 값은 어지러움뿐이었다 — 밖에서는 아무 일도 없었다.
+     이제 삼십 고을을 넘기면 옆에서 셈이 달라진다. */
+  b += clamp((natProvs('kor').length-18)*2.6, 0, 62);
+  b += occupied('kor').filter(p=>p.home==='chn'||p.home==='jpn').length*3;
+  return clamp(b+(C.wedge||0), -100, 100);
+}
+function cjTurn(B){
+  const C=G.cj; if(!C) return;
+  if(C.truce>0) C.truce--;
+  if(C.mediate>0) C.mediate--;
+  // 이간질로 벌려 놓은 자리는 해마다 조금씩 아문다
+  if(C.wedge) C.wedge = +(C.wedge*0.88).toFixed(2);
+  const 기준=cjBase();
+  C.rel = clamp(C.rel + clamp((기준-C.rel)*0.10, -6, 6), -100, 100);
+
+  if(C.war){
+    C.warYears++;
+    /* 중재가 붙어 있으면 더 빨리 손을 놓는다 — 조선이 낸 값의 몫이다.
+       삼백 판을 재 보니 세 해에 +0.22 로는 6.2해가 5.1해가 될 뿐이었다.
+       삼백이십 전과 정무 둘을 치르고 살 만한 것이 아니다. */
+    const 지침 = 0.05 + C.warYears*0.03 + (C.mediate>0? 0.30 : 0);
+    if(C.warYears>=(C.mediate>0? 1 : 2) && Math.random()<지침){
+      C.war=false; C.warYears=0; C.truce=6; C.rel=clamp(C.rel+22,-100,100);
+      log(natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 싸움을 거두었다.');
+      B.events.push('명·일본 휴전');
+    }
+  } else if(C.rel<=-45 && C.truce<=0 && !C.ally && Math.random()<0.14){
+    C.war=true; C.warYears=0; C.rel=clamp(C.rel-25,-100,100);
+    log(natName('chn')+과와(natName('chn'))+' '+natName('jpn')+' 사이에 전쟁이 열렸다.');
+    B.events.push('명·일본 전쟁');
+    snd('war');
+  }
+  if(C.ally && (C.rel<32 || C.war)){ C.ally=false;
+    log(natName('chn')+과와(natName('chn'))+' '+natName('jpn')+'의 동맹이 깨졌다.');
+    B.events.push('명·일본 동맹 파기'); }
+  else if(!C.ally && !C.war && C.rel>=70 && Math.random()<0.08){
+    C.ally=true;
+    log(natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 손을 잡았다.');
+    B.events.push('명·일본 동맹');
+  }
+  if(C.trade && C.war) C.trade=false;
+  else if(!C.trade && !C.war && C.rel>=24 && Math.random()<0.12) C.trade=true;
+  else if(C.trade && C.rel<0) C.trade=false;
+  B.cj={ rel:Math.round(C.rel), war:C.war, ally:C.ally };
+}
 function dipTurn(B){
   B.dip=[];
   DIP_NATS.forEach(k=>{
@@ -1569,7 +1678,7 @@ function declareWar(k, 우리가){
   d.trade=false; d.ally=false;
   if(우리가){
     G.legit=clamp(G.legit-4,0,100);
-    log(natName(k)+'과(와) 전쟁이 열렸다.');
+    log(natName(k)+과와(natName(k))+' 전쟁이 열렸다.');
   } else {
     log(natName(k)+이가(natName(k))+' 군사를 일으켰다.');
   }
@@ -1595,13 +1704,18 @@ function aiTurn(B){
     /* 약한 이웃을 문다. 조선도 예외가 아니다 — 종전에는 코드가 조선을 빼 놨다.
        다만 이제는 주사위가 아니라 사이를 본다. 형제와는 싸우지 않는다. */
     const d=dipOf(k);
+    const C=G.cj, 상대 = k==='chn'? 'jpn' : 'chn';
     let 기세 = 0.04 + (G.era>=1?0.03:0) + (G.era>=3?0.04:0);
     if(d && d.war) 기세 += 0.30;
     // 빼앗긴 제 땅이 많을수록 더 자주 군사를 낸다
     기세 += clamp(natProvs('kor').filter(p=>p.home===k).length*0.05, 0, 0.35);
+    /* 저희끼리 싸우는 동안에는 군사를 그쪽으로 돌린다.
+       손을 잡으면 뒤가 든든해져 조선 쪽으로 더 나온다. */
+    if(C && C.war)  기세 += 0.34;
+    if(C && C.ally) 기세 += 0.13;
     기세 *= diffOf().ai;
     // 전쟁 중에는 한 해에 여러 번 밀어붙인다. 이쪽만 여러 번 치던 것이 어긋남이었다.
-    const 횟수 = (d&&d.war)? 3 : 1;
+    const 횟수 = (d&&d.war)? 3 : (C&&C.war)? 2 : 1;
     for(let 시도=0; 시도<횟수; 시도++)
     if(Math.random()<기세){
       const mine=natProvs(k);
@@ -1611,6 +1725,8 @@ function aiTurn(B){
           const q=G.provs[id]; if(!q || q.nat===k) return;
           // 동맹이거나 휴전 중이면 조선을 건드리지 않는다
           if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
+          // 이웃끼리 손을 잡았거나 쉬기로 했으면 저희끼리도 건드리지 않는다
+          if(q.nat===상대 && C && (C.ally || C.truce>0)) return;
           /* 셈은 플레이어가 걸 때와 똑같다 — 화면에 보여 주는 낌새와
              이웃이 판단하는 수가 같아야 한다. */
           const w=warPower(p,q);
@@ -1621,6 +1737,8 @@ function aiTurn(B){
           let 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
           if(q.home===k && q.nat!==k) 미움 += 0.9;          // 빼앗긴 제 땅
           if(q.nat==='kor') 미움 += clamp((natProvs('kor').length-16)*0.035, 0, 0.9);
+          // 저희끼리 싸우는 중이면 상대의 고을을 먼저 본다
+          if(q.nat===상대 && C) 미움 += C.war? 1.1 : clamp(-C.rel/160, -0.2, 0.5);
           const s2=(이길낌새 + (q.unrest/200) + 미움)*눈치;
           // 이길 낌새가 어지간해야 군사를 낸다. 그래도 주사위는 던진다 —
           // 반반인 싸움에 뛰어드는 것은 슬기로운 조정이 아니라 무모한 조정이다.
@@ -1631,6 +1749,13 @@ function aiTurn(B){
         const [from,q]=best;
         const 옛임자=q.nat;
         if(옛임자==='kor' && d && !d.war) declareWar(k, false);
+        // 이웃이 이웃을 치면 그것도 전쟁이다 — 여태 아무 일 없이 땅만 오갔다
+        if(옛임자===상대 && C && !C.war){
+          C.war=true; C.warYears=0; C.truce=0; C.ally=false; C.trade=false;
+          C.rel=clamp(C.rel-30,-100,100);
+          log(natName(k)+이가(natName(k))+' '+natName(상대)+'에 군사를 냈다.');
+          if(B) B.events.push('명·일본 전쟁');
+        }
         const r=resolveBattle(from, q);
         if(r.won){
           q.nat=k;
@@ -1669,7 +1794,7 @@ function allyStrike(friend, foe, B){
   const r=resolveBattle(from, q);
   if(r.won){
     q.nat=friend;
-    log(natName(friend)+'이(가) 약조대로 '+natName(foe)+'의 '+q.nm+'을(를) 쳤다.');
+    log(natName(friend)+이가(natName(friend))+' 약조대로 '+natName(foe)+'의 '+q.nm+을를(q.nm)+' 쳤다.');
     if(B) B.events.push('동맹의 보복');
   }
 }
@@ -1736,7 +1861,7 @@ const ACTIONS=[
   { id:'sijang', nm:'장을 연다', cost:70, adm:1, need:p=>p.nat==='kor'&&p.trade<devCap(),
     desc:p=>'상업 '+p.trade+' → '+Math.min(devCap(),p.trade+devStep())
         +'.  연 수입 약 +'+Math.round(devStep()*TERR[p.t].trade*goodVal(p,'trade',1)*Math.pow(p.pop/100000,0.8))+'전'
-        +(goodOf(p)? '  ·  '+goodOf(p)+'을(를) 낸다' : ''),
+        +(goodOf(p)? '  ·  '+goodOf(p)+을를(goodOf(p))+' 낸다' : ''),
     run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); p.dev=Math.min(devCap(),p.dev+1);
       log(p.nm+'에 장을 열었다.'); snd('market'); fxPop(p.id,'장시','#e0bd76'); } },
   { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
@@ -1767,9 +1892,9 @@ const ACTIONS=[
       return o.from.nm+'의 '+o.U.nm+'로 친다.  이길 낌새 '+Math.round(o.p*100)+'%'
         + '  ('+num(Math.round(o.atk))+' 대 '+num(Math.round(o.def))+')'
         + (o.원군>1? '  · 이웃 고을이 원군 '+num(Math.round(o.원군))+'을 보낸다' : '')
-        + (o.원병>1? '  · '+natName(o.벗)+'이(가) 원병 '+num(Math.round(o.원병))+'을 보낸다' : '')
+        + (o.원병>1? '  · '+natName(o.벗)+이가(natName(o.벗))+' 원병을 '+num(Math.round(o.원병))+' 보낸다' : '')
         + (o.육로? '' : '  · 바닷길')
-        + (d && !d.war? '  ·  '+natName(p.nat)+'과(와) 전쟁이 열린다' : ''); },
+        + (d && !d.war? '  ·  '+natName(p.nat)+과와(natName(p.nat))+' 전쟁이 열린다' : ''); },
     run:p=>{ invade(p); } }
 ];
 function actCost(a,p){
@@ -1851,14 +1976,20 @@ function warPower(from, target){
      명과 일본은 서로 맞댄 고을이 하나도 없어, '우리를 친 쪽을 문다'는 약조가
      구조적으로 이뤄질 수 없었다. 대신 지킬 때 군사를 보내게 한다 —
      임진년에 실제로 그러했듯이. */
-  let 원병=0, 벗=null;
+  let 원병=0, 벗=null, 정=0;
   if(우리수비){
     벗=DIP_NATS.find(o=>o!==from.nat && dipOf(o) && dipOf(o).ally && !dipOf(o).war);
-    if(벗){
-      // 구원병이지 주둔군이 아니다 — 전선의 규모에 맞추어 온다
-      const 보낼수있는 = G.nations[벗].army * (0.02 + clamp(dipOf(벗).rel,0,100)/100*0.03);
-      원병 = Math.min(보낼수있는, target.army*3 + 3000);
-    }
+    if(벗) 정=clamp(dipOf(벗).rel,0,100);
+  } else if(DIP_NATS.includes(target.nat) && G.cj && G.cj.ally && !G.cj.war){
+    /* 저희끼리 맺은 동맹도 같은 값어치를 한다. 조선만 얻는 약조라면
+       그것은 약조가 아니라 이 놀이의 봐주기다. */
+    const o = target.nat==='chn'? 'jpn' : 'chn';
+    if(o!==from.nat){ 벗=o; 정=clamp(G.cj.rel,0,100); }
+  }
+  if(벗){
+    // 구원병이지 주둔군이 아니다 — 전선의 규모에 맞추어 온다
+    const 보낼수있는 = G.nations[벗].army * (0.02 + 정/100*0.03);
+    원병 = Math.min(보낼수있는, target.army*3 + 3000);
   }
   const T=TERR[target.t];
   const def=(target.army+원군+원병)*T.def*(1+target.fort*0.16)*V.def
@@ -1930,12 +2061,12 @@ function invade(target){
   if(r.won){
     const old=natName(임자);
     target.nat='kor';
-    log(from.nm+'의 '+r.w.U.nm+'이(가) '+target.nm+'을(를) 얻었다. ('+old+' 손실 '+num(r.lossD)+')');
+    log(from.nm+'의 '+r.w.U.nm+이가(r.w.U.nm)+' '+target.nm+을를(target.nm)+' 얻었다. ('+old+' 손실 '+num(r.lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
     G.legit=clamp(G.legit+2,0,100);
     snd('win');
   } else {
-    log(target.nm+'을(를) 쳤으나 물러났다. (아군 손실 '+num(r.lossA)+')');
+    log(target.nm+을를(target.nm)+' 쳤으나 물러났다. (아군 손실 '+num(r.lossA)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-6,0,100);
     G.legit=clamp(G.legit-2,0,100);
     snd('lose');
@@ -2012,6 +2143,42 @@ function dipActs(k){
         log(natName(k)+'에 국서를 보내 꾸짖었다.'); } }
   ];
 }
+/* 이웃끼리의 사이에 손을 대는 두 가지.
+   벌리는 쪽(이간)은 값이 싸고 들키면 판이 크게 나빠진다.
+   말리는 쪽(중재)은 값이 비싸고 명분이 남는다. */
+function cjActs(){
+  const C=G.cj, 물가=1+G.era*0.9;
+  const 솜씨=bestDip();
+  return [
+    { id:'wedge', nm:'이간', adm:2, cost:Math.round(180*물가),
+      can:()=>!!C && !C.war,
+      desc:()=>'두 나라 사이를 '+Math.round(14+솜씨/8)+' 벌린다.  '
+        + '들킬 낌새 '+Math.round(wedgeRisk()*100)+'% — 들키면 양쪽과의 사이가 각각 −16, 정통 −5.'
+        + '  외교에 밝은 신하가 벌리기도 잘하고 덜 들킨다 (지금 '+솜씨+').',
+      run:()=>{
+        const 폭=14+솜씨/8;
+        C.wedge=(C.wedge||0)-폭; C.rel=clamp(C.rel-폭,-100,100);
+        if(Math.random()<wedgeRisk()){
+          DIP_NATS.forEach(k=>{ const d=dipOf(k); if(d) d.rel=clamp(d.rel-16,-100,100); });
+          G.legit=clamp(G.legit-5,0,100);
+          log('이간질이 드러났다. 두 나라가 다 조선을 흘겨본다.'); snd('bad');
+        } else {
+          log('두 나라 사이에 말을 넣었다.'); snd('treaty');
+        }
+      } },
+    { id:'mediate', nm:'중재', adm:2, cost:Math.round(320*물가),
+      can:()=>!!C && C.war && !C.mediate,
+      desc:()=>'두 나라의 싸움을 말린다.  다섯 해 동안 손을 놓을 낌새가 크게 는다.  '
+        + '말려지면 정통 +8, 양쪽과의 사이 +12.  중화의 자리에 서는 값이다.',
+      run:()=>{
+        C.mediate=5; C.rel=clamp(C.rel+10,-100,100);
+        G.legit=clamp(G.legit+8,0,100);
+        DIP_NATS.forEach(k=>{ const d=dipOf(k); if(d) d.rel=clamp(d.rel+12,-100,100); });
+        log('두 나라 사이에 사람을 넣어 싸움을 말리기로 하였다.'); snd('treaty');
+      } }
+  ];
+}
+function wedgeRisk(){ return clamp(0.34 - bestDip()/380 - G.legit/900, 0.08, 0.34); }
 /* 통상을 하나 더 열면 해마다 얼마가 들어오는지 — 어림이라도 보여 준다 */
 function exportGuess(add){
   const M=mods();
@@ -2030,12 +2197,12 @@ function unlockTech(t){
   if(techDone(t.id)){ log('이미 열린 마디요.'); return; }
   if(G.era<t.era){ log('아직 이를 다룰 때가 아니오.'); return; }
   const prev=techPrev(t);
-  if(prev && !techDone(prev.id)){ log(prev.nm+'을(를) 먼저 이루어야 하오.'); return; }
+  if(prev && !techDone(prev.id)){ log(prev.nm+을를(prev.nm)+' 먼저 이루어야 하오.'); return; }
   if(G.res.pt < t.cost){ log('연구가 모자라오.'); return; }
   G.res.pt = +(G.res.pt - t.cost).toFixed(2);
   G.res.done[t.id]=G.year;
   G.nations.kor.tech = +(G.nations.kor.tech + 4 + G.era*1.5).toFixed(1);
-  log('「'+t.nm+'」을(를) 이루었다.'); snd('tech');
+  log('「'+t.nm+'」'+을를(t.nm)+' 이루었다.'); snd('tech');
 }
 
 /* ================================================================
@@ -2131,6 +2298,18 @@ function advice(){
     else if(d.rel<-30) 더(62, natName(k)+'과의 사이가 '+Math.round(d.rel),
       '사이가 나쁘면 먼저 물린다. 사신을 보내 두는 편이 싸게 먹힌다.', ()=>{ G.tab='외교'; });
   });
+
+  /* 이웃끼리의 사이 — 틈이 열렸는지, 사이에 끼었는지 */
+  const C=G.cj;
+  if(C && C.war) 더(72, natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 서로 싸운다',
+    '둘 다 군사를 그쪽으로 돌린 동안은 조선을 덜 본다. 지금이 성을 쌓고 북쪽을 볼 틈이다. '
+    + '말리면 정통이 오른다 — 중재는 값이 비싸다.', ()=>{ G.tab='외교'; });
+  else if(C && C.ally) 더(86, natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 손을 잡았다',
+    '조선이 사이에 끼었다. 둘 다 조선 쪽으로 더 나온다. 한쪽과 사이를 트거나 이간으로 벌려 놓는다.',
+    ()=>{ G.tab='외교'; });
+  else if(C && C.rel<=-34 && !C.truce) 더(54, natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 서로 흘긴다',
+    '사이가 '+Math.round(C.rel)+'이다. 조금만 더 벌려 두면 저희끼리 붙는다 — 이간은 값이 싸다.',
+    ()=>{ G.tab='외교'; });
 
   /* 붕당 */
   const fs=Object.keys(G.factions), 고름=100/Math.max(1,fs.length);
@@ -3273,6 +3452,19 @@ function drawMap(g){
      자리를 정해 놓고 밀어 넣으면 좁은 판에서 단추 밑으로 기어들어 간다. */
   const 보기w = LAY.small?116:150, 보기x = VIEW.x+MW-보기w;
   let lx=VIEW.x+6, ly=VIEW.y+MH+16, 뺀수=0; g.font='11px serif';
+  /* 이웃끼리의 판을 맨 앞에 세운다 — 탭을 열지 않아도 보여야 하는 소식이고,
+     고을 수보다 큰 소식이다. 좁은 판에서는 이것이 먼저 자리를 잡는다. */
+  const C0=G.cj;
+  if(C0 && (C0.war||C0.ally)){
+    const 글=natName('chn')+'↔'+natName('jpn')+(C0.war? ' 전쟁':' 동맹');
+    const 폭=g.measureText(글).width+14;
+    g.fillStyle= C0.war? 'rgba(143,168,106,.95)' : '#c4534a';
+    g.fillText(글, lx, ly);
+    if(inRect(Mouse,{x:lx-4,y:ly-12,w:폭,h:16}))
+      G.tip = C0.war? '두 나라가 서로 싸운다. 조선을 향한 발길이 뜸한 동안이다 — 지금이 틈이다.'
+                    : '두 나라가 손을 잡았다. 조선이 사이에 끼었다. 외교 탭에서 이간으로 벌려 놓을 수 있다.';
+    lx+=폭;
+  }
   Object.keys(NATIONS).forEach(k=>{
     const n=natProvs(k).length; if(!n) return;
     const 글=natName(k)+' '+n, 폭=22+g.measureText(글).width+(LAY.small?12:22);
@@ -3502,13 +3694,13 @@ function assign(o){
   if(P.nat!=='kor'){ log('우리 고을이 아니오.'); return; }
   const prev=officialAt(P.id); if(prev) prev.post=null;
   o.post=P.id;
-  log(o.nm+'을(를) '+P.nm+' 수령으로 보냈다.');
+  log(o.nm+을를(o.nm)+' '+P.nm+' 수령으로 보냈다.');
 }
 function recruit(o){
   const N=G.nations.kor;
   if(N.gold<40){ log('국고가 모자라오.'); return; }
   N.gold-=40; G.pool=G.pool.filter(x=>x!==o); G.officials.push(o);
-  log(o.nm+'을(를) 등용했다.');
+  log(o.nm+을를(o.nm)+' 등용했다.');
 }
 function conflictOf(id){
   const out=[];
@@ -3547,7 +3739,7 @@ function sidePolicy(g,x,y,w){
     g.fillStyle='rgba(196,83,74,.92)';  g.fillText('－ '+P.bad,  x+2, yy+35);
     if(clash.length && !on){
       g.fillStyle='rgba(190,158,96,.75)';
-      g.fillText('※ '+clash.map(polName).join('·')+'과(와) 함께 쓸 수 없다', x+2, yy+46);
+      g.fillText('※ '+clash.map(polName).join('·')+과와(clash.map(polName).join('·'))+' 함께 쓸 수 없다', x+2, yy+46);
     }
     hz(x-4,yy-10,w+8,rowH, ()=>{ togglePolicy(P); });
     yy+=rowH;
@@ -3559,17 +3751,17 @@ function togglePolicy(P){
   if(G.policies.includes(P.id)){
     G.policies=G.policies.filter(i=>i!==P.id);
     if(G.polSince) delete G.polSince[P.id];
-    log(P.nm+'을(를) 거두었다.'); return;
+    log(P.nm+을를(P.nm)+' 거두었다.'); return;
   }
   if(G.era<P.era){ log('아직 이를 논할 때가 아니오.'); return; }
   const clash=conflictOf(P.id);
-  if(clash.length){ log(clash.map(polName).join('·')+'을(를) 두고 '+P.nm+'을(를) 함께 펼 수는 없소.'); return; }
+  if(clash.length){ log(clash.map(polName).join('·')+을를(clash.map(polName).join('·'))+' 두고 '+P.nm+을를(P.nm)+' 함께 펼 수는 없소.'); return; }
   if(G.policies.length>=3){ log('정책은 셋까지요.'); return; }
   if(N.gold<P.cost){ log('국고가 모자라오.'); return; }
   N.gold-=P.cost; G.policies.push(P.id);
   (G.polSince||(G.polSince={}))[P.id]=G.year;
   if(P.id==='chagwan'){ N.gold+=400; log('차관을 들여왔다. 국고에 400전이 들어왔다.'); }
-  log(P.nm+'을(를) 시행한다.'); snd('treaty');
+  log(P.nm+을를(P.nm)+' 시행한다.'); snd('treaty');
 }
 /* ── 외교 ──
    이웃이 둘뿐이라 화면도 둘로 나뉜다. 사이 하나, 조약 넷, 그리고 값. */
@@ -3615,6 +3807,43 @@ function sideDiplomacy(g,x,y,w){
     });
     yy = by + Math.ceil(acts.length/2)*42 + 22;
   });
+
+  /* ── 이웃끼리의 사이 ──
+     조선이 남을 보는 눈만 있던 자리에, 남들이 서로를 보는 눈을 더한다. */
+  const C=G.cj;
+  if(C){
+    divider(g,x,yy-10,w); yy+=8;
+    g.fillStyle=NATIONS.chn.col; g.fillRect(x, yy-11, 3, 14);
+    g.fillStyle=NATIONS.jpn.col; g.fillRect(x+3, yy-11, 3, 14);
+    g.fillStyle='#e8e1d1'; g.font='14px serif';
+    g.fillText(natName('chn')+' ↔ '+natName('jpn'), x+13, yy);
+    g.font='12px serif'; g.textAlign='right'; g.fillStyle=relCol(C.rel);
+    g.fillText(relName(C.rel)+'  '+(C.rel>0?'+':'')+Math.round(C.rel), x+w, yy);
+    g.textAlign='left';
+    bar2(g, x, yy+8, w, 10, C.rel/100, relCol(C.rel));
+    if(inRect(Mouse,{x:x,y:yy+8,w:w,h:10}))
+      G.tip='둘이 맞붙어 있는 동안은 조선을 덜 본다. 손을 잡으면 조선이 사이에 낀다. '
+          + '가만두면 '+Math.round(cjBase())+' 쪽으로 돌아간다.';
+    let cx3=x, cy3=yy+24;
+    if(C.war)     cx3+=chip(g,cx3,cy3,'서로 전쟁','#c4534a');
+    if(C.ally)    cx3+=chip(g,cx3,cy3,'서로 동맹','#c4534a');
+    if(C.truce>0) cx3+=chip(g,cx3,cy3,'휴전 '+C.truce+'년','#9fd0e8');
+    if(C.mediate>0) cx3+=chip(g,cx3,cy3,'중재 '+C.mediate+'년','#8fa86a');
+    if(C.trade)   cx3+=chip(g,cx3,cy3,'서로 통상','#c9a24a');
+    if(cx3===x){ g.fillStyle='rgba(110,105,98,.8)'; g.font='10px serif';
+      g.fillText('서로 맺은 것 없음', x, cy3+11); }
+    // 이 사이가 조선에 무엇인지 한 줄로
+    g.fillStyle= C.war? 'rgba(143,168,106,.95)' : C.ally? '#c4534a' : 'rgba(150,145,135,.7)';
+    g.font='10px serif';
+    g.fillText(C.war? '둘이 싸우는 동안 조선을 향한 발길이 뜸하다 — 지금이 틈이다'
+             : C.ally? '둘이 손을 잡았다. 조선이 사이에 끼었다'
+             : '조용하다', x, cy3+26);
+    const acts2=cjActs(), colW2=(w-8)/2;
+    acts2.forEach((a,i)=>{
+      actBtn(g, x+i*(colW2+8), cy3+36, colW2, 26, a.nm, a.adm, a.cost, a.can(), a.run, a.desc());
+    });
+    yy = cy3+36+26+34;   // 단추 아래 값 줄(+10)까지 비운다
+  }
 
   /* 값 — 조약이 해마다 얼마를 벌고 얼마를 먹는지 */
   divider(g,x,yy-10,w); yy+=6;
@@ -3854,7 +4083,7 @@ function drawBottom(g){
           + '  =  병력 '+num(P.army)+' + 이웃의 원군 '+num(Math.round(원군))
           + '  ×  지형 '+TERR[P.t].def.toFixed(2)+' × 성곽 '+(1+P.fort*0.16).toFixed(2)
           + ' × 병종 '+unitOf(P).def.toFixed(2)
-          + (위협처? ('    ·  가장 센 이웃 '+위협처.nm+'이(가) 치면 '+위협처.nm+'의 이길 낌새 '
+          + (위협처? ('    ·  가장 센 이웃 '+위협처.nm+이가(위협처.nm)+' 치면 '+위협처.nm+'의 이길 낌새 '
                       +Math.round(winChance(위협,수비)*100)+'%') : '    ·  맞댄 남의 고을이 없다');
       sx+=Math.max(최소칸, Math.max(vw,lw,nw)+(LAY.small?14:26));
     });
@@ -4154,7 +4383,7 @@ function packSave(){
     scores:G.scores, legit:G.legit, usedPeople:G.usedPeople, ended:G.ended,
     /* 예전 판이 흘리던 것들 — 다시 불러오면 사라져 있던 상태 */
     evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
-    res:G.res, dip:G.dip, byeol:G.byeol, tab:G.tab, sel:G.sel, view:G.view,
+    res:G.res, dip:G.dip, cj:G.cj, byeol:G.byeol, saheWait:G.saheWait, tab:G.tab, sel:G.sel, view:G.view,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
     farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0,
@@ -4199,7 +4428,9 @@ function loadGame(slot){
     if(d.minorDone) G.minorDone=d.minorDone;
     if(d.res) G.res={ pt:d.res.pt||0, done:d.res.done||{}, gain:d.res.gain||0 };
     if(d.dip) DIP_NATS.forEach(k=>{ if(d.dip[k]) Object.assign(G.dip[k], d.dip[k]); });
-    G.byeol=d.byeol||0;
+    // 이웃끼리의 사이 — 0.6.0 이전 판에는 없다. 없으면 새 판의 자리에서 시작한다.
+    if(d.cj) Object.assign(G.cj, d.cj);
+    G.byeol=d.byeol||0; G.saheWait=d.saheWait||0;
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
     if(d.sel && d.sel in G.provs) G.sel=d.sel;
@@ -4363,7 +4594,7 @@ function drawSlots(g, mode){
     // 지우기
     if(info && !자동){
       btn(g, x+w-92, yy+18, 56, 26, '지우기', false, ()=>{
-        확인('지우기','칸 '+s+'을(를) 지운다.','지운다',()=>{ deleteSlot(s); MENU={tab:mode, from:MENU&&MENU.from}; });
+        확인('지우기','칸 '+s+'번을 지운다.','지운다',()=>{ deleteSlot(s); MENU={tab:mode, from:MENU&&MENU.from}; });
       });
     }
     yy+=rh+10;
