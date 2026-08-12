@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.9.2';
+const VERSION = '0.9.3';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -1019,7 +1019,8 @@ function newGame(){
       factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
       evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
       res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0,
-      king:null, gen:null, genN:0, edict:null, reign:null, reigns:[], pendingReign:null };
+      king:null, gen:null, genN:0, edict:null, reign:null, reigns:[], pendingReign:null,
+      saga:newSaga() };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -1624,6 +1625,7 @@ function endTurn(){
           +G.provs[seat].nm+은는(G.provs[seat].nm)+' '+heir.nm+이가(heir.nm)+' 맡는다.');
       B.events.push('사화');
       if(G.reign) G.reign.사화++;
+      if(G.saga) G.saga.purges++;
       N.stab=clamp(N.stab-8,0,100);
     }
   }
@@ -1654,6 +1656,7 @@ function endTurn(){
     }
   }
 
+  sagaTick(B);
   /* 치세의 장부 — 이 임금이 맡은 동안의 몫만 센다 */
   if(G.reign){ G.reign.해++; G.reign.stab += N.stab; }
   reignTurn(B);
@@ -2020,6 +2023,7 @@ function declareWar(k, 우리가){
   const d=dipOf(k); if(!d || d.war) return;
   d.war=true; d.warYears=0; d.truce=0; snd('war'); shake(0.5);
   if(G.reign) G.reign.전쟁++;
+  if(G.saga){ G.saga.wars++; G.saga.warWith[k]=(G.saga.warWith[k]||0)+1; }
   d.rel=clamp(d.rel-45,-100,100);
   d.trade=false; d.ally=false;
   if(우리가){
@@ -2110,6 +2114,7 @@ function aiTurn(B){
             G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
             G.legit=clamp(G.legit-5,0,100);
             if(G.reign) G.reign.뺏김++;
+            sagaDo('lost', q.nm);
             if(B) B.events.push(q.nm+' 함락');
             if(q.cap){ log('도읍이 넘어갔다.'); if(G.reign) G.reign.도읍잃음=1; }
             snd('lose');
@@ -2180,6 +2185,48 @@ function endGame(title, body){
   const r=pushRecord(title);                        // 최고 기록에 남긴다
   G.popup={ kind:'end', title, body, y:G.year, total:tot, rank:r.rank };
 }
+/* ================================================================
+   판의 장부 — 육백 년을 무엇으로 남길 것인가
+   ----------------------------------------------------------------
+   끝나면 점수표 하나가 떴다. 육백 년을 둔 대가로는 얄팍하다.
+   해마다 한 줄씩 적어 두면 마지막에 실록 한 권이 된다.
+   ================================================================ */
+function newSaga(){
+  return { peakProv:0, peakProvY:0, peakPop:0, peakPopY:0,
+           wars:0, warYears:0, warWith:{}, purges:0,
+           taken:0, lost:0, lostNames:[], takeNames:[],
+           did:{ gaegan:0, sijang:0, chuk:0, mo:0, jin:0 },
+           firstTrade:null, firstAlly:null, longWar:0,
+           mark:[] };                        // 십 년마다의 발자국
+}
+function sagaDo(무엇, 이름){
+  const S=G.saga; if(!S) return;
+  if(S.did[무엇]!=null){ S.did[무엇]++; return; }
+  if(무엇==='takeWin'){ S.taken++; if(S.takeNames.length<40) S.takeNames.push(이름+' '+G.year); }
+  if(무엇==='lost'){ S.lost++; if(S.lostNames.length<40) S.lostNames.push(이름+' '+G.year); }
+}
+function sagaTick(B){
+  const S=G.saga; if(!S) return;
+  const N=G.nations.kor, 고을=natProvs('kor').length;
+  if(고을>S.peakProv){ S.peakProv=고을; S.peakProvY=G.year; }
+  if(N.pop>S.peakPop){ S.peakPop=N.pop; S.peakPopY=G.year; }
+  let 전쟁중=0, 최장=0;
+  DIP_NATS.forEach(k=>{ const d=dipOf(k); if(d&&d.war){ 전쟁중=1; 최장=Math.max(최장,d.warYears); }
+    if(d&&d.trade&&S.firstTrade==null) S.firstTrade=G.year;
+    if(d&&d.ally &&S.firstAlly ==null) S.firstAlly =G.year; });
+  if(전쟁중) S.warYears++;
+  S.longWar=Math.max(S.longWar, 최장);
+  // 십 년마다 발자국 하나 — 마지막에 육백 년을 한 줄로 그린다
+  if(G.year%10===0 || !S.mark.length){
+    S.mark.push({ y:G.year, p:고을, pop:Math.round(N.pop/10000),
+                  s:Math.round(N.stab), t:Math.round(N.tech) });
+    if(S.mark.length>80) S.mark.shift();
+  }
+}
+/* 1392년의 임자 — 시작 지도를 되살리는 데 쓴다 */
+const START_NAT={};
+PROVDEF.forEach(d=>{ START_NAT[d.id]=d.nat; });
+
 function checkEnd(){
   if(G.ended) return;
   const 도읍=Object.values(G.provs).find(p=>p.cap && p.id==='hans');
@@ -2204,32 +2251,32 @@ const ACTIONS=[
   { id:'gaegan', nm:'개간', cost:80, adm:1, need:p=>p.nat==='kor'&&p.farm<devCap(),
     desc:p=>'농지 '+p.farm+' → '+Math.min(devCap(),p.farm+devStep())+'.  개발 +1. 인구가 더 늘 수 있게 된다.',
     run:p=>{ p.farm=Math.min(devCap(),p.farm+devStep()); p.dev=Math.min(devCap(),p.dev+1);
-      G.plateDirty=true; townBuilt(p,'farm'); fxDust(p.id,'#8fbf6a',7);
+      G.plateDirty=true; townBuilt(p,'farm'); fxDust(p.id,'#8fbf6a',7); sagaDo('gaegan');
       log(p.nm+'의 농지를 넓혔다.'); snd('build'); fxPop(p.id,'개간','#8fbf6a'); } },
   { id:'sijang', nm:'장을 연다', cost:70, adm:1, need:p=>p.nat==='kor'&&p.trade<devCap(),
     desc:p=>'상업 '+p.trade+' → '+Math.min(devCap(),p.trade+devStep())
         +'.  연 수입 약 +'+Math.round(devStep()*TERR[p.t].trade*goodVal(p,'trade',1)*Math.pow(p.pop/100000,0.8))+'전'
         +(goodOf(p)? '  ·  '+goodOf(p)+을를(goodOf(p))+' 낸다' : ''),
     run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); p.dev=Math.min(devCap(),p.dev+1);
-      townBuilt(p,'market'); fxDust(p.id,'#e0bd76',6);
+      townBuilt(p,'market'); fxDust(p.id,'#e0bd76',6); sagaDo('sijang');
       log(p.nm+'에 장을 열었다.'); snd('market'); fxPop(p.id,'장시','#e0bd76'); } },
   { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
     desc:p=>'성곽 '+p.fort+' → '+(p.fort+1)+'. 방어 +16%, 해마다 유지가 는다.',
     run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true;
-      townBuilt(p,'wall'); fxDust(p.id,'#cfc7b6',10);
+      townBuilt(p,'wall'); fxDust(p.id,'#cfc7b6',10); sagaDo('chuk');
       log(p.nm+'의 성을 쌓았다.'); snd('fort'); fxPop(p.id,'축성','#cfc7b6'); } },
   { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.03,
     desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 3%까지만. 군량을 먹는다.',
     run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/mods().popMo));
       p.unrest=clamp(p.unrest+3,0,100);
-      townBuilt(p,'army'); fxDust(p.id,'#c4534a',6);
+      townBuilt(p,'army'); fxDust(p.id,'#c4534a',6); sagaDo('mo');
       log(p.nm+'에서 군사를 모았다.'); snd('levy'); fxPop(p.id,'+2,000','#c4534a'); } },
   { id:'jin', nm:'진휼', cost:90, adm:1, need:p=>p.nat==='kor'&&p.unrest>0,
     desc:p=>'어지러움 '+Math.round(p.unrest)+' → '+Math.round(Math.max(0,p.unrest-25))
           +'.  곡식 '+num(Math.round(p.pop/240))+'을 푼다. 나라 민심 +1.5',
     run:p=>{ const N=G.nations.kor, 곡=Math.round(p.pop/240);
       if(N.food<곡){ log('풀 곡식이 없소.'); return false; }
-      p.unrest=clamp(p.unrest-25,0,100); N.food-=곡;
+      p.unrest=clamp(p.unrest-25,0,100); N.food-=곡; sagaDo('jin');
       N.stab=clamp(N.stab+1.5,0,100);
       log(p.nm+'에 곡식 '+num(곡)+'을 풀었다.'); snd('relief'); fxPop(p.id,'진휼','#8fbf6a'); } },
   /* 싸움만은 국고로 살 수 없다. 별칙은 조정이 지쳐도 돈으로 밀어붙이는 손이지만,
@@ -2416,6 +2463,7 @@ function invade(target){
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
     G.legit=clamp(G.legit+2,0,100);
     if(G.reign) G.reign.얻음++;
+    sagaDo('takeWin', target.nm);
     snd('win');
   } else {
     log(target.nm+을를(target.nm)+' 쳤으나 물러났다. (아군 손실 '+num(r.lossA)+')');
@@ -5435,6 +5483,241 @@ function drawReignEnd(g){
     G.pendingReign=null; nextEvent();
   });
 }
+/* ================================================================
+   실록 — 한 판이 남긴 것
+   ----------------------------------------------------------------
+   끝나면 점수표 하나가 떴다. 육백 년을 두고 나서 받는 것이 그것뿐이면
+   그 육백 년이 어디로 갔는지 알 수가 없다.
+   네 쪽으로 나누어 편다 — 마침 · 강토 · 치세 · 남은 것.
+   ================================================================ */
+const SAGA_TABS=['마침','강토','치세','남은 것'];
+let SAGAPG=0, SAGASC=0;
+function openSaga(){ SAGAPG=0; SAGASC=0; MENU={tab:'saga'}; }
+function drawSaga(g){
+  const S=G.saga||newSaga(), P=G.popup;
+  g.fillStyle='rgba(4,5,8,.88)'; g.fillRect(0,0,CFG.W,CFG.H);
+  const w=창폭(660), h=Math.min(CFG.H-24, LAY.phone? CFG.H-24 : 560);
+  const x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  bigPanel(g,x,y,w,h);
+  g.textAlign='center'; g.fillStyle='#e0bd76'; g.font=(LAY.phone?'20px':'24px')+' serif';
+  g.fillText('실록', CFG.W/2, y+38);
+  g.fillStyle='rgba(150,145,135,.75)'; g.font='11px serif';
+  g.fillText('1392 – '+G.year+'  ·  '+(G.turn||0)+'해를 다스렸다', CFG.W/2, y+56);
+  g.textAlign='left';
+  // 쪽 고르개
+  const tw=(w-60)/SAGA_TABS.length;
+  SAGA_TABS.forEach((t,i)=>{
+    btn(g, x+30+i*tw, y+68, tw-4, 26, t, SAGAPG===i, ()=>{ SAGAPG=i; SAGASC=0; });
+  });
+  const cx=x+34, cy=y+112, cw=w-68, ch=h-112-52;
+  const h0=HIT.length;
+  g.save(); g.beginPath(); g.rect(x+16, cy-14, w-32, ch+14); g.clip();
+  let 끝=cy;
+  if(SAGAPG===0)      끝=sagaEnd(g,cx,cy-SAGASC,cw,S);
+  else if(SAGAPG===1) 끝=sagaLand(g,cx,cy-SAGASC,cw,S);
+  else if(SAGAPG===2) 끝=sagaReigns(g,cx,cy-SAGASC,cw);
+  else                끝=sagaRest(g,cx,cy-SAGASC,cw,S);
+  g.restore();
+  // 굴림
+  const 높이=끝-(cy-SAGASC), max=Math.max(0, 높이-ch+16);
+  const 안=inRect((Mouse.wheelX!=null)?{x:Mouse.wheelX,y:Mouse.wheelY}:Mouse,
+                  {x:x, y:cy-14, w:w, h:ch+14});
+  if(안 && Mouse.wheel) SAGASC+=Mouse.wheel;
+  SAGASC=clamp(SAGASC, 0, max);
+  for(let i=HIT.length-1;i>=h0;i--){ const z=HIT[i], m=z.y+z.h/2;
+    if(m<cy-14 || m>cy+ch) HIT.splice(i,1); }
+  if(max>0){ const bh=Math.max(28, ch*ch/(ch+max));
+    g.fillStyle='rgba(190,158,96,.10)'; g.fillRect(x+w-22, cy, 3, ch);
+    g.fillStyle='rgba(190,158,96,.55)'; g.fillRect(x+w-22, cy+(ch-bh)*(SAGASC/max), 3, bh); }
+  // 아래 단추
+  btn(g, CFG.W/2-70, y+h-40, 140, 30, P&&P.kind==='end'? '끝' : '덮는다', false, ()=>{
+    MENU=null;
+    if(P&&P.kind==='end'){ /* 결말 창은 남겨 둔다 — 다시 펼 수 있게 */ }
+  });
+  g.fillStyle='rgba(130,125,115,.6)'; g.font='10px serif'; g.textAlign='center';
+  g.fillText('← → 로 쪽을 넘긴다', CFG.W/2, y+h-52); g.textAlign='left';
+}
+/* ① 마침 */
+function sagaEnd(g,x,y,w,S){
+  const P=G.popup, 끝난=!!G.ended;
+  const 제목=(P&&P.kind==='end')? P.title : (끝난? '끝났다' : '아직 다스리는 중');
+  const 몸=(P&&P.kind==='end')? P.body : (끝난? '' : '이 판은 아직 끝나지 않았다.');
+  g.textAlign='center';
+  g.fillStyle='#e0bd76'; g.font=(LAY.phone?'26px':'30px')+' serif';
+  g.fillText(제목, x+w/2, y+16);
+  g.fillStyle='#d9d2c2'; g.font='13px serif';
+  let yy=y+42;
+  wrapText(g,몸,w-60).slice(0,3).forEach(t=>{ g.fillText(t, x+w/2, yy); yy+=19; });
+  const tot=G.scores.reduce((a,s)=>a+s.pt,0);
+  g.fillStyle='#e0bd76'; g.font=(LAY.phone?'22px':'26px')+' serif';
+  g.fillText(num(tot)+'점', x+w/2, yy+26);
+  if(P&&P.rank){ g.fillStyle= P.rank===1?'#8fa86a':'rgba(160,155,145,.9)'; g.font='12px serif';
+    g.fillText(P.rank===1? '기록에서 으뜸이다' : ('기록에서 '+P.rank+'째'), x+w/2, yy+46); }
+  g.textAlign='left';
+  yy+=68;
+  return drawScores(g, x+20, yy, w-40);
+}
+/* ② 강토 — 1392년과 마지막 해를 나란히, 그리고 육백 년의 발자국 */
+function sagaLand(g,x,y,w,S){
+  const 작은지도=(px,py,pw,임자)=>{
+    // MAPVIS 의 길을 그대로 줄여 그린다 — 지도를 두 번 만들 까닭이 없다
+    const sc=pw/MAP_GEO.width, ph=MAP_GEO.height*sc;
+    g.save(); g.translate(px,py); g.scale(sc,sc);
+    g.fillStyle='rgba(18,26,32,.85)'; g.fillRect(0,0,MAP_GEO.width,MAP_GEO.height);
+    g.fillStyle='rgba(52,56,46,.9)'; g.fill(MAPVIS.land,'evenodd');
+    /* 남의 땅은 눌러 두고 조선만 밝게 — 두 지도를 견주는 것이 이 쪽의 일이다.
+       다 같은 세기로 칠했더니 명이 화면을 덮어 무엇이 달라졌는지 안 보였다. */
+    Object.values(G.provs).forEach(P2=>{
+      const k=임자(P2); if(!k || k==='kor') return;
+      g.fillStyle=NATIONS[k].col; g.globalAlpha=.20;
+      g.fill(MAPVIS.rect[P2.id],'evenodd');
+    });
+    Object.values(G.provs).forEach(P2=>{
+      if(임자(P2)!=='kor') return;
+      g.fillStyle='#8fa8e0'; g.globalAlpha=.95;
+      g.fill(MAPVIS.rect[P2.id],'evenodd');
+    });
+    g.globalAlpha=1;
+    g.strokeStyle='rgba(220,211,168,.4)'; g.lineWidth=1/sc; g.stroke(MAPVIS.land);
+    g.restore();
+    return ph;
+  };
+  const 폭=Math.min((w-16)/2, 260);
+  g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
+  g.fillText('1392년', x, y);
+  g.fillText(G.year+'년', x+폭+16, y);
+  const ph=작은지도(x, y+6, 폭, P2=>START_NAT[P2.id]);
+  작은지도(x+폭+16, y+6, 폭, P2=>P2.nat);
+  let yy=y+6+ph+16;
+  g.fillStyle='rgba(143,168,224,.9)'; g.font='9px serif';
+  g.fillText('■', x, yy); g.fillStyle='rgba(150,145,135,.7)';
+  g.fillText(' 조선이 쥔 땅', x+9, yy);
+  yy+=20;
+  // 견줌
+  const 처음고을=Object.values(G.provs).filter(p=>START_NAT[p.id]==='kor').length;
+  const 지금고을=natProvs('kor').length;
+  const 줄=(k,a,b,좋음)=>{
+    g.fillStyle='rgba(150,145,135,.8)'; g.font='12px serif'; g.fillText(k, x, yy);
+    g.fillStyle='rgba(140,135,125,.85)'; g.textAlign='right'; g.fillText(a, x+w*0.56, yy);
+    g.fillStyle='rgba(150,145,135,.6)'; g.fillText('→', x+w*0.64, yy);
+    g.fillStyle= 좋음==null? '#e8e1d1' : 좋음? '#8fa86a' : '#c4534a';
+    g.fillText(b, x+w, yy); g.textAlign='left'; yy+=20;
+  };
+  const N=G.nations.kor;
+  줄('고을', 처음고을+' 곳', 지금고을+' 곳', 지금고을>=처음고을);
+  줄('인구', '611만', numS(N.pop), N.pop>=6110386);
+  줄('기술', '10', num(Math.round(N.tech)), true);
+  줄('민심', '60', Math.round(N.stab)+'', N.stab>=60);
+  줄('정통', '50', Math.round(G.legit)+'', G.legit>=50);
+  if(S.peakProv>지금고을){
+    g.fillStyle='rgba(150,145,135,.7)'; g.font='11px serif';
+    g.fillText('가장 넓었을 때 '+S.peakProv+'고을 ('+S.peakProvY+'년)', x, yy); yy+=18;
+  }
+  // 육백 년의 발자국
+  yy+=8; divider(g,x,yy-8,w); yy+=16;
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('육백 년', x, yy);
+  g.font='9px serif'; g.textAlign='right';
+  g.fillStyle='rgba(224,189,118,.9)'; g.fillText('고을', x+w-38, yy);
+  g.fillStyle='rgba(159,208,232,.85)'; g.fillText('인구', x+w, yy);
+  g.textAlign='left';
+  yy+=14;
+  const M=S.mark||[];
+  if(M.length>=2){
+    const gh=70, gw=w;
+    const y0=yy, y1=yy+gh;
+    const maxP=Math.max(...M.map(m=>m.p), 16);
+    const maxPop=Math.max(...M.map(m=>m.pop), 1);
+    const X=i=>x+gw*(i/(M.length-1));
+    g.strokeStyle='rgba(190,158,96,.16)'; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x,y1); g.lineTo(x+gw,y1); g.stroke();
+    // 인구
+    g.beginPath();
+    M.forEach((m,i)=>{ const py=y1-(m.pop/maxPop)*gh; i?g.lineTo(X(i),py):g.moveTo(X(i),py); });
+    g.strokeStyle='rgba(159,208,232,.75)'; g.lineWidth=1.4; g.stroke();
+    // 고을
+    g.beginPath();
+    M.forEach((m,i)=>{ const py=y1-(m.p/maxP)*gh; i?g.lineTo(X(i),py):g.moveTo(X(i),py); });
+    g.strokeStyle='rgba(224,189,118,.9)'; g.lineWidth=1.6; g.stroke();
+    g.font='9px serif'; g.fillStyle='rgba(130,125,115,.7)';
+    g.fillText('1392', x, y1+12);
+    g.textAlign='right'; g.fillText(G.year+'', x+gw, y1+12); g.textAlign='left';
+    yy=y1+22;
+  }
+  return yy;
+}
+/* ③ 치세 */
+function sagaReigns(g,x,y,w){
+  const 치=(G.reigns||[]);
+  let yy=y;
+  if(!치.length){
+    g.fillStyle='rgba(110,105,98,.9)'; g.font='13px serif';
+    g.fillText('아직 지나간 치세가 없다.', x, yy); return yy+20;
+  }
+  const 빛={성세:'#8fa86a', 치세:'#e0bd76', 평세:'#c9bfa8', 난세:'#c9a24a', 망조:'#c4534a'};
+  const 셈={}; 치.forEach(R=>{ 셈[R.등급]=(셈[R.등급]||0)+1; });
+  g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
+  g.fillText(치.length+'대  ·  '+Object.keys(빛).filter(k=>셈[k]).map(k=>k+' '+셈[k]).join(' · '), x, yy);
+  yy+=18;
+  치.forEach(R=>{
+    g.fillStyle=빛[R.등급]||'#c9bfa8'; g.fillRect(x-4, yy-10, 2, 30);
+    g.fillStyle='#e8e1d1'; g.font='13px serif'; g.fillText(R.나, x+8, yy);
+    const nw=g.measureText(R.나).width;
+    g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif';
+    g.fillText(R.y0+'–'+R.y1+'  '+R.해+'년  ·  교서 「'+R.교서+'」', x+12+nw, yy);
+    g.fillStyle=빛[R.등급]||'#c9bfa8'; g.font='12px serif'; g.textAlign='right';
+    g.fillText(R.등급, x+w, yy); g.textAlign='left';
+    g.fillStyle='rgba(140,135,125,.85)'; g.font='10px serif';
+    const 줄=wrapText(g, R.글, w-16).slice(0,2);
+    줄.forEach((t,i)=>g.fillText(t, x+8, yy+13+i*12));
+    yy+=20+줄.length*12;
+  });
+  return yy;
+}
+/* ④ 남은 것 */
+function sagaRest(g,x,y,w,S){
+  let yy=y;
+  const 칸=(제목)=>{ g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText(제목, x, yy); yy+=18; };
+  const 줄=(k,v,col)=>{
+    g.fillStyle='rgba(150,145,135,.8)'; g.font='12px serif'; g.fillText(k, x, yy);
+    g.fillStyle=col||'#e8e1d1'; g.textAlign='right'; g.fillText(v, x+w, yy);
+    g.textAlign='left'; yy+=19;
+  };
+  칸('조정이 한 일');
+  줄('개간', S.did.gaegan+'번'); 줄('장을 연 것', S.did.sijang+'번');
+  줄('축성', S.did.chuk+'번');   줄('모병', S.did.mo+'번');
+  줄('진휼', S.did.jin+'번');
+  줄('기술 마디', Object.keys(G.res.done).length+' / '+TECHS.length);
+  yy+=8; 칸('싸움');
+  줄('전쟁', S.wars+'번', S.wars? '#c4534a':'#8fa86a');
+  줄('전쟁으로 보낸 해', S.warYears+'해  (가장 길게 '+S.longWar+'해)');
+  줄('빼앗은 고을', S.taken+'곳', S.taken? '#8fa86a':null);
+  줄('잃은 고을', S.lost+'곳', S.lost? '#c4534a':null);
+  줄('사화', S.purges+'번', S.purges>=3? '#c4534a':null);
+  yy+=8; 칸('이웃');
+  DIP_NATS.forEach(k=>{
+    const d=dipOf(k);
+    줄(natName(k), (d? (relName(d.rel)+' '+Math.round(d.rel)) : '—')
+      + (S.warWith[k]? '   · 전쟁 '+S.warWith[k]+'번' : ''), d? relCol(d.rel):null);
+  });
+  줄('처음 통상을 연 해', S.firstTrade? S.firstTrade+'년' : '끝내 열지 않았다',
+     S.firstTrade? null : 'rgba(150,145,135,.7)');
+  줄('처음 동맹한 해', S.firstAlly? S.firstAlly+'년' : '끝내 맺지 않았다',
+     S.firstAlly? null : 'rgba(150,145,135,.7)');
+  // 못 한 것 — 하지 않은 일도 이 판의 얼굴이다
+  yy+=8; 칸('하지 않은 일');
+  const 못=[];
+  if(!S.firstTrade) 못.push('통상 조약을 한 번도 맺지 않았다');
+  if(!S.firstAlly)  못.push('동맹을 한 번도 맺지 않았다');
+  if(!S.taken)      못.push('남의 고을을 한 곳도 치지 않았다');
+  if(!S.wars)       못.push('한 번도 전쟁을 하지 않았다');
+  if(Object.keys(G.res.done).length===0) 못.push('기술을 한 마디도 열지 않았다');
+  if(!G.policies.length) 못.push('정책을 하나도 펴지 않았다');
+  if(!못.length) 못.push('할 만한 것은 대개 해 보았다');
+  g.fillStyle='rgba(150,145,135,.85)'; g.font='11px serif';
+  못.forEach(t=>{ g.fillText('· '+t, x+4, yy); yy+=16; });
+  return yy+10;
+}
+
 function drawPopup(g){
   const P=G.popup;
   if(P.kind==='choice'){ drawChoice(g); return; }
@@ -5458,9 +5741,15 @@ function drawPopup(g){
   g.textAlign='left';
   if(끝) drawScores(g, x+60, y+160, w-120);
   const 남은 = (G.evQueue? G.evQueue.length : 0) + (G.pendingEvent?1:0);
-  btn(g, CFG.W/2-70, y+h-46, 140, 30,
-      끝? '끝' : (남은? '다음 일로' : '알겠다'), false,
-      ()=>{ G.popup=null; nextEvent(); });
+  if(끝){
+    /* 육백 년을 두고 나서 받는 것이 점수표 하나면 그 육백 년이 어디로
+       갔는지 알 수가 없다. 실록을 펼 수 있게 한다. */
+    btn(g, CFG.W/2-150, y+h-46, 140, 30, '실록을 편다', true, ()=>{ openSaga(); });
+    btn(g, CFG.W/2+10, y+h-46, 140, 30, '끝', false, ()=>{ G.popup=null; });
+  } else {
+    btn(g, CFG.W/2-70, y+h-46, 140, 30, (남은? '다음 일로' : '알겠다'), false,
+        ()=>{ G.popup=null; nextEvent(); });
+  }
 }
 function drawTip(g){
   if(!G.tip) return;
@@ -5490,7 +5779,7 @@ function packSave(){
     /* 예전 판이 흘리던 것들 — 다시 불러오면 사라져 있던 상태 */
     evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
     res:G.res, dip:G.dip, cj:G.cj, byeol:G.byeol, saheWait:G.saheWait, tab:G.tab, sel:G.sel, view:G.view,
-    king:G.king, gen:G.gen, genN:G.genN, edict:G.edict, reign:G.reign, reigns:G.reigns,
+    king:G.king, gen:G.gen, genN:G.genN, edict:G.edict, reign:G.reign, reigns:G.reigns, saga:G.saga,
     pendingReign:G.pendingReign,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
@@ -5546,6 +5835,7 @@ function loadGame(slot){
                         node0:Object.keys(G.res.done).length, legit0:Math.round(G.legit),
                         pop0:G.nations.kor.pop, stab:0, 해:0, 전쟁:0, 사화:0, 뺏김:0, 얻음:0 };
     G.reigns=d.reigns||[]; G.pendingReign=d.pendingReign||null;
+    G.saga=Object.assign(newSaga(), d.saga||{});
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
     if(d.sel && d.sel in G.provs) G.sel=d.sel;
@@ -5823,9 +6113,10 @@ function drawSound(g){
 function drawMenu(g){
   if(MENU && MENU.confirm){ drawConfirm(g); return; }
   if(MENU && MENU.tab==='sound'){ drawSound(g); return; }
+  if(MENU && MENU.tab==='saga'){ drawSaga(g); return; }
   if(MENU && MENU.tab==='records'){ drawRecords(g); return; }
   if(MENU && MENU.tab){ drawSlots(g, MENU.tab); return; }
-  const w=창폭(300), h=436, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  const w=창폭(300), h=482, x=(CFG.W-w)/2, y=(CFG.H-h)/2;
   g.fillStyle='rgba(4,5,8,.78)'; g.fillRect(0,0,CFG.W,CFG.H);
   bigPanel(g,x,y,w,h);
   g.textAlign='center'; g.fillStyle='#e0bd76'; g.font='20px serif';
@@ -5837,6 +6128,7 @@ function drawMenu(g){
   btn(g,bx,yy,bw,38,'돌아가기',false,()=>{ MENU=null; }); yy+=46;
   btn(g,bx,yy,bw,38,'저장하기',false,()=>{ MENU={tab:'save'}; }); yy+=46;
   btn(g,bx,yy,bw,38,'불러오기',false,()=>{ MENU={tab:'load'}; }); yy+=46;
+  btn(g,bx,yy,bw,38,'실록',false,()=>{ openSaga(); }); yy+=46;
   btn(g,bx,yy,bw,38,'기록',false,()=>{ MENU={tab:'records'}; }); yy+=46;
   btn(g,bx,yy,bw,38,'소리',false,()=>{ MENU={tab:'sound'}; }); yy+=46;
   btn(g,bx,yy,bw,38,'새로 시작',false,()=>{
@@ -5914,6 +6206,11 @@ function tick(){
     else if(G.popup && G.popup.kind!=='choice' && G.popup.kind!=='end'
             && G.popup.kind!=='accede') G.popup=null;
     else if(!G.popup && SCENE==='play') MENU={tab:null};
+  }
+  // 실록에서는 ← → 로 쪽을 넘긴다
+  if(MENU && MENU.tab==='saga'){
+    if(Key.pressed['ArrowLeft']){ Key.pressed['ArrowLeft']=false; SAGAPG=Math.max(0,SAGAPG-1); SAGASC=0; }
+    if(Key.pressed['ArrowRight']){ Key.pressed['ArrowRight']=false; SAGAPG=Math.min(SAGA_TABS.length-1,SAGAPG+1); SAGASC=0; }
   }
   // 선택지 창에서는 1·2·3으로도 고른다
   if(창 && !MENU && !G.pendingReign && G.popup
