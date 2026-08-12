@@ -2745,12 +2745,36 @@ function raisable(P){
   const 남길=Math.round(garrisonTarget(P)*0.55);
   return Math.max(0, Math.floor((P.army-남길)/500)*500);
 }
+/* 한 자리에 선 같은 편 군은 하나로 합친다.
+   ----------------------------------------------------------------
+   출정은 고을 하나에서만 뽑으므로, 여러 고을에서 군을 일으켜 한자리에
+   모으면 깃발이 다섯 개 포개졌다. 그림은 서로를 덮어 숫자가 뭉개지고,
+   눌러도 그중 하나만 잡히니 다섯을 해마다 따로따로 부려야 했다.
+   판 위의 말은 「그 자리에 선 우리 군」 하나여야 한다.
+
+   가는 중인 군은 합치지 않는다 — 아직 그 자리에 있는 것이 아니다. */
+function mergeArmies(){
+  if(!G.armies) return;
+  const 자리={};
+  G.armies.slice().forEach(A=>{
+    if(A.dest) return;
+    const k=A.at+'|'+A.nat, 앞=자리[k];
+    if(!앞){ 자리[k]=A; return; }
+    앞.men += A.men;
+    앞.siege = Math.max(앞.siege||0, A.siege||0);
+    앞.told  = 앞.told || A.told;
+    앞.born  = Math.min(앞.born||G.year, A.born||G.year);
+    G.armies = G.armies.filter(x=>x!==A);
+    if(G.armySel===A.id) G.armySel=앞.id;
+  });
+}
 function raiseArmy(P){
   const men=raisable(P); if(men<1000) return null;
   P.army-=men;
   const A={ id:ARMY_ID++, nat:'kor', at:P.id, dest:null, men, siege:0, mv:0, born:G.year };
   G.armies.push(A);
   G.armySel=A.id;
+  mergeArmies();                 // 이미 그 자리에 우리 군이 있으면 한 덩어리가 된다
   log(P.nm+'에서 '+num(men)+'을 일으켜 군을 세웠다.');
   if(!G.saga || !(G.saga.did.chul)){
     /* 첫 군이다 — 무엇을 눌러야 하는지 한 번은 일러 준다 */
@@ -2761,7 +2785,8 @@ function raiseArmy(P){
   }
   fxPop(P.id,'출정','#e0bd76'); snd('levy');
   if(G.saga) G.saga.did.chul=(G.saga.did.chul||0)+1;
-  return A;
+  // 합쳐졌으면 살아남은 덩어리를 돌려준다
+  return G.armies.find(x=>x.id===G.armySel) || A;
 }
 function disbandArmy(A){
   const P=G.provs[A.at];
@@ -2921,6 +2946,8 @@ function armyTurn(B){
       if(P && DIP_NATS.includes(P.nat)) declareWar(P.nat, true);
     }
   });
+  // 닿은 자리에서 같은 편끼리 한 덩어리가 된다 — 깃발이 포개지지 않게
+  mergeArmies();
   // ② 야전 — 한 고을에 두 나라의 군이 있으면
   let 안전=0;
   while(안전++<40){
