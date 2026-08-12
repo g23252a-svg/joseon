@@ -2839,45 +2839,62 @@ function fieldBattle(A, B2){
 
    이제 성곽은 provDef 안에서 한 번만 센다. 여기서 빼는 몫은 「사다리와
    공성구가 없으면 성벽 앞에서 하루가 그냥 간다」는 정도로만 남긴다. */
+/* 한 성을 미는 힘은 그 자리에 선 같은 편 군을 모두 더한 것이다.
+   예전에는 군마다 제 눈금을 따로 밀었다. 그래서 삼만 셋으로 나누어 보낸
+   구만이 한 덩어리 구만보다 네 배 넘게 느렸다(4해 → 17해). 삼만 둘로 나눈
+   육만은 영영 성을 못 넘겼다 — 한 덩어리 육만은 여덟 해면 넘겼는데도.
+   판은 「군을 더 보내면 빨라진다」고 적어 두었는데 보낼수록 느려졌다.
+   출정은 고을 하나에서만 뽑으므로 사람은 자연히 이 나뉜 모양이 된다. */
 function siegeStep(A, P){
   if(!P) return 0;
-  const 수비=provDef(P, A), 밀기=armyAtk(A);
+  const 무=Array.isArray(A)? A : [A]; if(!무.length) return 0;
+  const 수비=provDef(P, 무[0]);
+  const 밀기=무.reduce((s,a)=>s+armyAtk(a), 0);
   return clamp(30*(밀기/Math.max(1,수비)) - P.fort*0.9, -4, 50);
 }
-function siegeTick(A, B){
-  const P=G.provs[A.at]; if(!P) return;
+/* 그 성을 함께 미는 우리 편 무리 */
+function siegeParty(A){
+  return armiesAt(A.at).filter(a=>a.nat===A.nat);
+}
+function siegeTick(무리, B){
+  const 무=Array.isArray(무리)? 무리 : [무리];
+  const A0=무[0]; if(!A0) return;
+  const P=G.provs[A0.at]; if(!P) return;
+  const 총=무.reduce((s,a)=>s+a.men, 0);
   /* 에워싼 첫해에 한 번은 알린다. 여태 아무 말이 없다가 몇 해 뒤에
      「함락시켰다」만 떴으니, 성이 갑자기 사라지는 것처럼 보였다. */
-  if(!A.told){
-    A.told=1;
+  if(!무.some(a=>a.told)){
+    무.forEach(a=>a.told=1);
     if(P.nat==='kor'){
-      log(natName(A.nat)+'의 군 '+num(A.men)+'이 '+P.nm+을를(P.nm)+' 에워쌌다.');
+      log(natName(A0.nat)+'의 군 '+num(총)+'이 '+P.nm+을를(P.nm)+' 에워쌌다.');
       if(B) B.events.push(P.nm+' 포위됨');
       snd('war'); shake(0.4);
       const at=fxAt(P.id);
       if(at) fx({ kind:'float', life:2.2, at:{x:at.x,y:at.y-12},
                   text:P.nm+' 포위', col:'#c4534a', size:13, rise:20 });
-    } else if(A.nat==='kor'){
-      log('우리 군이 '+P.nm+을를(P.nm)+' 에워쌌다. 성곽 '+P.fort+'.');
+    } else if(A0.nat==='kor'){
+      log('우리 군 '+num(총)+'이 '+P.nm+을를(P.nm)+' 에워쌌다. 성곽 '+P.fort+'.');
       if(B) B.events.push(P.nm+' 포위');
     }
-  }
-  const 걸음=siegeStep(A, P);
-  A.siege=clamp(A.siege+걸음, 0, 100);
+  } else 무.forEach(a=>a.told=1);
+  const 걸음=siegeStep(무, P);
+  // 눈금은 무리가 함께 쥔다 — 뒤늦게 붙은 군이 앞의 공을 지우면 안 된다
+  const 눈금=clamp(Math.max(...무.map(a=>a.siege||0))+걸음, 0, 100);
+  무.forEach(a=>a.siege=눈금);
   // 포위된 고을은 시끄러워지고 수비병이 준다
   P.unrest=clamp(P.unrest+2.2,0,100);
   P.army=Math.round(P.army*0.96);
-  const at=fxAt(A.at);
-  if(A.siege>=100){
+  if(눈금>=100){
     const 옛=P.nat;
-    P.nat=A.nat; P.unrest=clamp(P.unrest+40,0,100); P.assim=0;
-    P.army=Math.round(A.men*0.22); A.men=Math.round(A.men*0.82); A.siege=0; A.told=0;
+    P.nat=A0.nat; P.unrest=clamp(P.unrest+40,0,100); P.assim=0;
+    P.army=Math.round(총*0.22);
+    무.forEach(a=>{ a.men=Math.round(a.men*0.82); a.siege=0; a.told=0; });
     G.plateDirty=true; ROUTEKEY='';
-    fxFlip(P, 옛, P.nm+' 함락', A.nat==='kor'? '#f0e2be':'#c4534a');
-    shake(0.9); snd(A.nat==='kor'? 'win':'lose');
-    log(natName(A.nat)+이가(natName(A.nat))+' '+P.nm+을를(P.nm)+' 함락시켰다.');
-    if(B) B.events.push(P.nm+(A.nat==='kor'? ' 함락':' 잃음'));
-    if(A.nat==='kor'){
+    fxFlip(P, 옛, P.nm+' 함락', A0.nat==='kor'? '#f0e2be':'#c4534a');
+    shake(0.9); snd(A0.nat==='kor'? 'win':'lose');
+    log(natName(A0.nat)+이가(natName(A0.nat))+' '+P.nm+을를(P.nm)+' 함락시켰다.');
+    if(B) B.events.push(P.nm+(A0.nat==='kor'? ' 함락':' 잃음'));
+    if(A0.nat==='kor'){
       G.legit=clamp(G.legit+2,0,100); sagaDo('takeWin', P.nm);
       if(G.reign) G.reign.얻음++;
     } else if(옛==='kor'){
@@ -2886,8 +2903,6 @@ function siegeTick(A, B){
       sagaDo('lost', P.nm); if(G.reign) G.reign.뺏김++;
       if(P.cap){ log('도읍이 넘어갔다.'); if(G.reign) G.reign.도읍잃음=1; }
     }
-  } else if(at && A.nat==='kor' && A.siege>0){
-    // 포위가 얼마나 갔는지는 지도에서 고리로 보인다 (drawArmies)
   }
 }
 /* 한 해 — 움직이고, 부딪히고, 줄어든다 */
@@ -2919,14 +2934,20 @@ function armyTurn(B){
     if(!붙음) break;
     fieldBattle(붙음[0], 붙음[1]);
   }
-  // ③ 포위와 소모
+  // ③ 포위 — 한 성에 선 같은 편은 무리로 묶어 함께 민다
+  const 무리={};
+  G.armies.forEach(A=>{
+    const P=G.provs[A.at];
+    if(!P) return;
+    if(P.nat===A.nat){ A.siege=0; A.told=0; return; }
+    const k=A.at+'|'+A.nat;
+    (무리[k]=무리[k]||[]).push(A);
+  });
+  Object.values(무리).forEach(무=>siegeTick(무, B));
+  // ④ 소모
   G.armies.slice().forEach(A=>{
     const P=G.provs[A.at];
     if(!P){ return; }
-    if(P.nat!==A.nat){
-      // 우군 야전군이 그 고을에 함께 있으면 아직 포위가 아니다
-      siegeTick(A,B);
-    } else { A.siege=0; }
     // 소모 — 남의 땅에서는 빨리 줄어든다
     const 밖 = !P || P.nat!==A.nat;
     A.men=Math.round(A.men*(밖? 0.93 : 0.985));
@@ -2936,7 +2957,7 @@ function armyTurn(B){
       if(G.armySel===A.id) G.armySel=null;
     }
   });
-  // ④ 군량 — 야전군은 곳간을 먹는다
+  // ⑤ 군량 — 야전군은 곳간을 먹는다
   const 우리군=armyList('kor').reduce((s,a)=>s+a.men,0);
   B.upkeepField=Math.round(우리군*0.010*(1+G.era*0.3));
   G.nations.kor.gold=Math.max(0, G.nations.kor.gold-B.upkeepField);
@@ -4940,7 +4961,9 @@ function drawArmyBar(g){
   const 겨눔 = G.sel && G.sel!==A.at && G.provs[G.sel] && G.provs[G.sel].nat!=='kor'
                && canGo(A, G.sel) ? G.provs[G.sel] : null;
   if(겨눔 && !A.dest){
-    const 걸음=siegeStep({nat:'kor', at:겨눔.id, men:A.men}, 겨눔);
+    const 함께=armiesAt(겨눔.id).filter(a=>a.nat==='kor')
+                 .concat([{nat:'kor', at:겨눔.id, men:A.men}]);
+    const 걸음=siegeStep(함께, 겨눔);
     상태='【'+겨눔.nm+'】 수비 '+num(Math.round(provDef(겨눔,null)))
         +(걸음>0? '  ·  한 해 +'+Math.round(걸음)+'  ·  '+Math.ceil(100/걸음)+'해면 함락'
                 : '  ·  이 군으로는 못 민다');
@@ -4948,9 +4971,11 @@ function drawArmyBar(g){
   } else if(A.dest && G.provs[A.dest]){
     상태='→ '+G.provs[A.dest].nm+'  '+((A.need||1)-A.mv)+'해'; 빛='rgba(150,145,135,.85)';
   } else if(P && P.nat!=='kor'){
-    const 걸음=siegeStep(A,P);
+    const 무=siegeParty(A);                       // 이 성을 함께 미는 우리 편 모두
+    const 걸음=siegeStep(무,P);
     const 남=걸음>0? Math.ceil((100-A.siege)/걸음)+'해 뒤 함락' : '이 힘으로는 못 민다 — 군을 더 보내시오';
-    상태=(A.siege>0? '포위 '+Math.round(A.siege)+'%  ' : '')
+    상태=(무.length>1? '함께 미는 군 '+무.length+'  ·  ' : '')
+        +(A.siege>0? '포위 '+Math.round(A.siege)+'%  ' : '')
         +(걸음>0? '한 해 +'+Math.round(걸음)+'  ·  ' : '')+남;
     빛= 걸음>0? '#e0bd76' : '#c4534a';
   } else {
@@ -6410,7 +6435,7 @@ const HELP=[
    ['h','군'],
    ['p','출정으로 세운 군은 판 위에 깃발로 선다. 깃발을 누르면 갈 수 있는 고을이 빛나고, 그 고을을 누르면 그리로 간다. 한 해에 한 걸음씩 간다.'],
    ['d','야전','한 고을에서 두 나라의 군이 만나면 그 자리에서 붙는다. 이긴 쪽만 남는다.'],
-   ['d','포위','남의 성에 닿으면 해마다 조금씩 민다. 100이 되면 함락이다. 성곽이 높으면 더디고, 군을 더 보내면 빨라진다.'],
+   ['d','포위','남의 성에 닿으면 해마다 조금씩 민다. 100이 되면 함락이다. 한 성에 우리 군이 여럿 서면 힘을 합쳐 민다 — 3만 셋은 9만 하나와 똑같다. 고을 판의 「수비」를 보고 그 두세 배를 모으면 서너 해에 넘어온다.'],
    ['d','군량','판 위의 군은 해마다 줄고 곡식을 먹는다. 남의 땅에서는 더 빨리 녹는다.'],
    ['p','세워 두고 잊으면 그 자리에서 사라진다. 갈 곳을 정하거나, 제 땅에서 풀어 수비병으로 되돌린다.'],
    ['-'],
