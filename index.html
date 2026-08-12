@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -1692,6 +1692,9 @@ function endTurn(){
     else if(Math.random()<0.16) minorEvent(B);
   }
 
+  /* 한 해가 지나갔다 — 지도 위로 빛이 한 번 지나간다.
+     숫자만 바뀌고 그림이 그대로면 해가 바뀐 것이 아니라 표가 바뀐 것이다. */
+  fx({ kind:'yearSweep', life:1.15 });
   G.report=B;                                          // 연말 결산을 띄운다
   checkEnd();
   saveGame('auto');
@@ -2201,21 +2204,25 @@ const ACTIONS=[
   { id:'gaegan', nm:'개간', cost:80, adm:1, need:p=>p.nat==='kor'&&p.farm<devCap(),
     desc:p=>'농지 '+p.farm+' → '+Math.min(devCap(),p.farm+devStep())+'.  개발 +1. 인구가 더 늘 수 있게 된다.',
     run:p=>{ p.farm=Math.min(devCap(),p.farm+devStep()); p.dev=Math.min(devCap(),p.dev+1);
-      G.plateDirty=true; log(p.nm+'의 농지를 넓혔다.'); snd('build'); fxPop(p.id,'개간','#8fbf6a'); } },
+      G.plateDirty=true; townBuilt(p,'farm'); fxDust(p.id,'#8fbf6a',7);
+      log(p.nm+'의 농지를 넓혔다.'); snd('build'); fxPop(p.id,'개간','#8fbf6a'); } },
   { id:'sijang', nm:'장을 연다', cost:70, adm:1, need:p=>p.nat==='kor'&&p.trade<devCap(),
     desc:p=>'상업 '+p.trade+' → '+Math.min(devCap(),p.trade+devStep())
         +'.  연 수입 약 +'+Math.round(devStep()*TERR[p.t].trade*goodVal(p,'trade',1)*Math.pow(p.pop/100000,0.8))+'전'
         +(goodOf(p)? '  ·  '+goodOf(p)+을를(goodOf(p))+' 낸다' : ''),
     run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); p.dev=Math.min(devCap(),p.dev+1);
+      townBuilt(p,'market'); fxDust(p.id,'#e0bd76',6);
       log(p.nm+'에 장을 열었다.'); snd('market'); fxPop(p.id,'장시','#e0bd76'); } },
   { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
     desc:p=>'성곽 '+p.fort+' → '+(p.fort+1)+'. 방어 +16%, 해마다 유지가 는다.',
     run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true;
+      townBuilt(p,'wall'); fxDust(p.id,'#cfc7b6',10);
       log(p.nm+'의 성을 쌓았다.'); snd('fort'); fxPop(p.id,'축성','#cfc7b6'); } },
   { id:'mo', nm:'모병', cost:100, adm:1, need:p=>p.nat==='kor'&&p.army<p.pop*0.03,
     desc:p=>'병력 '+num(p.army)+' → '+num(p.army+2000)+'. 인구의 3%까지만. 군량을 먹는다.',
     run:p=>{ p.army+=2000; p.pop=Math.max(20000,p.pop-Math.round(1200/mods().popMo));
       p.unrest=clamp(p.unrest+3,0,100);
+      townBuilt(p,'army'); fxDust(p.id,'#c4534a',6);
       log(p.nm+'에서 군사를 모았다.'); snd('levy'); fxPop(p.id,'+2,000','#c4534a'); } },
   { id:'jin', nm:'진휼', cost:90, adm:1, need:p=>p.nat==='kor'&&p.unrest>0,
     desc:p=>'어지러움 '+Math.round(p.unrest)+' → '+Math.round(Math.max(0,p.unrest-25))
@@ -3002,6 +3009,16 @@ function fxFlip(P, prevNat, text, col){
   fx({ kind:'ring', life:1.0, at:a, col:col||'#c9a24a' });
   if(text) fx({ kind:'float', life:1.9, at:{x:a.x,y:a.y-8}, text, col:col||'#c9a24a', size:12 });
 }
+/* 흙먼지 — 무엇을 지으면 그 자리에서 인다 */
+function fxDust(id, col, n){
+  const a=fxAt(id); if(!a) return;
+  for(let i=0;i<(n||6);i++){
+    const ang=Math.random()*Math.PI*2, sp=6+Math.random()*16;
+    fx({ kind:'dust', life:0.9+Math.random()*0.6, at:{x:a.x,y:a.y},
+         vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp*0.5-10-Math.random()*10,
+         r:1.2+Math.random()*1.8, col:col||'#cfc7b6' });
+  }
+}
 /* 고을에서 뭔가 좋은 일이 일어났다 */
 function fxPop(id, text, col){
   const a=fxAt(id); if(!a) return;
@@ -3015,6 +3032,28 @@ function drawFX(g, inv){
     if(tt<0) return;                       // 아직 차례가 아니다
     const k=clamp(tt/f.life,0,1);
     g.save();
+    if(f.kind==='yearSweep'){
+      // 지도 위를 왼쪽에서 오른쪽으로 지나가는 빛
+      const V=activeMapView(), z=V.zoom;
+      const x0=V.x, x1=V.x+VIEW.w/z, y0=V.y, y1=V.y+VIEW.h/z;
+      const w=(x1-x0)*0.22, cx=lerp(x0-w, x1+w, k);
+      const gr=g.createLinearGradient(CFG.GX+cx-w, 0, CFG.GX+cx+w, 0);
+      const a2=(1-Math.abs(k*2-1))*0.16;
+      gr.addColorStop(0,'rgba(255,244,206,0)');
+      gr.addColorStop(0.5,'rgba(255,244,206,'+a2.toFixed(3)+')');
+      gr.addColorStop(1,'rgba(255,244,206,0)');
+      g.fillStyle=gr;
+      g.fillRect(CFG.GX+cx-w, CFG.GY+y0, w*2, y1-y0);
+      g.restore(); return;
+    }
+    if(f.kind==='dust'){
+      // 흙먼지 — 지은 자리에서 튀어 오르다 가라앉는다
+      const px=f.at.x+f.vx*tt, py=f.at.y+f.vy*tt+38*tt*tt;
+      g.globalAlpha=(1-k)*0.8;
+      g.fillStyle=f.col;
+      g.beginPath(); g.arc(px,py,f.r*(1-k*0.4)*inv,0,7); g.fill();
+      g.restore(); return;
+    }
     if(f.kind==='march'){
       // 군사가 건너간다 — 점선이 흘러가고 화살촉이 앞선다
       const e=clamp(k/0.55,0,1);
@@ -3438,6 +3477,283 @@ function seaDist(){
       d[ny][nx]=d[y][x]+1; q.push([nx,ny]); }); }
   return d;
 }
+/* ================================================================
+   고을 — 지도 위에 실제로 서는 마을
+   ----------------------------------------------------------------
+   여태 개발 4인 고을과 40인 고을이 똑같이 생겼다. 다각형에 빛깔을 칠하고
+   이름을 얹은 것이 전부였으니, 삼백 해를 개간하고 축성해도 지도는 첫해와
+   같은 그림이었다. 눈금이 오르는 것을 숫자로만 알 수 있으면 그것은
+   장부이지 지도가 아니다.
+
+   이제 고을마다 마을을 그린다. 자리는 고을 이름을 씨앗으로 한 번 정해
+   두고(TOWNLAY), 몇 채를 그릴지만 지금 눈금에서 가져온다. 그러면
+     개간하면  논이 한 뙈기 는다
+     장을 열면 저자에 깃발이 하나 선다
+     축성하면  성벽이 한 칸 오른다
+     모병하면  창대가 하나 는다
+   자리가 늘 같으므로 '자란다'로 보이고, 새로 선 것만 솟아오른다.
+   ================================================================ */
+const TOWNLAY={};
+/* 한 번만 정하는 자리들. 씨앗은 고을 id — 판을 다시 열어도 같은 마을이다. */
+function townLayout(P){
+  if(TOWNLAY[P.id]) return TOWNLAY[P.id];
+  let n=0; for(let i=0;i<P.id.length;i++) n=(n*131+P.id.charCodeAt(i))>>>0;
+  let s=n||1;
+  const r=()=>{ s^=s<<13; s>>>=0; s^=s>>>17; s^=s<<5; s>>>=0; return s/4294967296; };
+  const 집=[], 논=[], 저자=[], 배=[], 창=[];
+  // 집 — 가운데에 모이고 바깥으로 퍼진다
+  for(let i=0;i<16;i++){
+    const a=r()*Math.PI*2, d=(0.35+Math.sqrt(i/16)*1.5)*(0.8+r()*0.5);
+    집.push([Math.cos(a)*d, Math.sin(a)*d*0.62, 0.8+r()*0.5, r()<0.34]);
+  }
+  // 논 — 마을 바깥의 네모난 뙈기
+  for(let i=0;i<14;i++){
+    const a=r()*Math.PI*2, d=1.9+r()*2.3;
+    논.push([Math.cos(a)*d, Math.sin(a)*d*0.6, 0.9+r()*0.7, r()*0.5-0.25]);
+  }
+  for(let i=0;i<8;i++){ const a=r()*Math.PI*2, d=0.9+r()*0.7;
+    저자.push([Math.cos(a)*d, Math.sin(a)*d*0.6, r()]); }
+  for(let i=0;i<5;i++){ const a=(r()*0.9+0.3)*Math.PI, d=3.0+r()*1.6;
+    배.push([Math.cos(a)*d, Math.sin(a)*d*0.7, r()]); }
+  for(let i=0;i<10;i++){ const a=r()*Math.PI*2, d=1.3+r()*0.9;
+    창.push([Math.cos(a)*d, Math.sin(a)*d*0.6, r()]); }
+  return (TOWNLAY[P.id]={집,논,저자,배,창});
+}
+/* 마을의 크기 — 사람과 개발이 정한다 */
+function townScale(P){
+  return clamp(Math.pow(Math.max(1,P.pop)/260000, 0.34) * (0.62 + (P.dev||0)/46), 0.45, 2.4);
+}
+/* 새로 선 것은 솟아오른다 — 무엇을 지었는지 P.built 에 적어 둔다 */
+function townBuilt(P, 무엇){
+  P.built={ k:무엇, t:NOW };
+  G.plateDirty=G.plateDirty;   // 판은 다시 굽지 않는다 — 마을은 실시간으로 그린다
+}
+function 솟음(P, 무엇){
+  if(!P.built || P.built.k!==무엇) return 1;
+  const t=(NOW-P.built.t)/0.9;
+  return t>=1? 1 : clamp(t,0,1);
+}
+/* 고을 하나를 그린다. 지도 안쪽 좌표계에서 부른다. */
+function drawTown(g, P, z){
+  const R=MAPVIS.regions[P.id]; if(!R) return;
+  /* 자리는 R.anchor 다. label 은 글자를 놓는 자리라 바다로 밀려 있는 것이 있다 —
+     처음에 그것을 썼더니 개성이 바다 한가운데에 성을 쌓았다. */
+  const x=CFG.GX+R.anchor[0], y=CFG.GY+R.anchor[1];
+  const S=townScale(P), L=townLayout(P);
+  const 우리=P.nat==='kor';
+  const col=NATIONS[P.nat].col, col2=NATIONS[P.nat].col2;
+  /* 확대에 따라 보이는 것이 달라진다 —
+     멀리서는 점 하나, 다가가면 지붕과 성벽, 더 다가가면 논과 저자가 나온다.
+     한반도를 통째로 보는 자리에서 논두렁까지 그리면 마흔둘을 다 그리느라
+     한 프레임이 31ms 로 늘어졌다(60프레임은 16.7ms 안에 끝나야 한다).
+     나라 전체를 보는 눈에 이랑이 보일 까닭도 없다. */
+  const 자세히 = z>=1.6, 아주자세히 = z>=4.0;
+  const u=1.15*S;                                  // 한 칸의 크기
+  /* 화면에서 몇 픽셀이나 되는가 — 두 픽셀짜리 마을에 지붕을 스물 그릴 까닭이 없다 */
+  if(u*z < 2.4){
+    g.fillStyle='rgba(58,48,38,.7)';
+    g.beginPath(); g.arc(x,y,Math.max(0.8,u*0.6),0,7); g.fill();
+    return;
+  }
+  if(!자세히){
+    // 멀리서 — 크기만 보이는 덩어리
+    g.fillStyle='rgba(58,48,38,.75)';
+    g.beginPath(); g.ellipse(x,y+u*0.2,u*1.15,u*0.62,0,0,7); g.fill();
+    g.fillStyle=col;
+    g.beginPath(); g.arc(x,y,Math.max(1.1,u*0.42),0,7); g.fill();
+    return;
+  }
+  g.save();
+  /* ── 논밭 ── */
+  if(아주자세히 && P.farm>0){
+    const n=Math.min(L.논.length, Math.round(P.farm/3.4));
+    const 새=솟음(P,'farm');
+    const 뙈기=new Path2D(), 이랑=new Path2D();
+    for(let i=0;i<n;i++){
+      const [dx,dy,sz,tilt]=L.논[i];
+      const k = (i===n-1)? 새 : 1;
+      if(k<=0.02) continue;
+      const w=u*1.05*sz*k, h=u*0.55*sz*k;
+      const m=new DOMMatrix().translate(x+dx*u, y+dy*u).rotate(tilt*57.2958);
+      const one=new Path2D(); one.rect(-w/2,-h/2,w,h);
+      뙈기.addPath(one, m);
+      const two=new Path2D();
+      for(let j=1;j<3;j++){ two.moveTo(-w/2, -h/2+h*j/3); two.lineTo(w/2, -h/2+h*j/3); }
+      이랑.addPath(two, m);
+    }
+    g.fillStyle= 우리? 'rgba(126,148,74,.62)' : 'rgba(104,118,72,.42)';
+    g.fill(뙈기);
+    g.lineWidth=Math.max(0.3,0.5/z);
+    g.strokeStyle='rgba(52,58,34,.5)'; g.stroke(뙈기);
+    g.strokeStyle='rgba(70,86,44,.45)'; g.stroke(이랑);
+  }
+  /* ── 성벽 — 남문을 비운 고리 ── */
+  if(P.fort>0){
+    const 새=솟음(P,'wall');
+    const rad=u*(1.05+P.fort*0.055);
+    const 두께=Math.max(0.5, 0.5+P.fort*0.15);
+    const 문=0.32;                                   // 남쪽으로 열린 문
+    g.save(); g.translate(x,y); g.scale(1,0.60);
+    g.lineCap='butt';
+    g.strokeStyle='rgba(30,27,22,.9)'; g.lineWidth=두께+0.8;
+    g.beginPath(); g.arc(0,0,rad, Math.PI/2+문, Math.PI/2-문+Math.PI*2); g.stroke();
+    g.strokeStyle= 우리? 'rgba(176,162,132,.95)' : 'rgba(136,128,112,.8)';
+    g.lineWidth=두께;
+    g.beginPath(); g.arc(0,0,rad, Math.PI/2+문, Math.PI/2-문+Math.PI*2); g.stroke();
+    // 망루 — 성곽 수만큼. 마지막 하나는 새로 쌓은 것이라 솟아오른다.
+    const 망=Math.min(9,P.fort+2);
+    for(let i=0;i<망;i++){
+      const a=Math.PI/2+문 + (i/(망-0.001))*(Math.PI*2-문*2);
+      const k=(i===망-1)? 새 : 1;
+      if(k<=0.02) continue;
+      const tw=u*0.24, tx=Math.cos(a)*rad, ty=Math.sin(a)*rad;
+      g.fillStyle='rgba(34,30,25,.92)';
+      g.fillRect(tx-tw/2, ty-tw*1.1*k, tw, tw*2.0*k);
+      g.fillStyle= 우리? '#c3b592' : '#96907f';
+      g.fillRect(tx-tw*0.34, ty-tw*1.0*k, tw*0.68, tw*1.7*k);
+    }
+    // 문루
+    g.fillStyle='rgba(34,30,25,.92)';
+    g.fillRect(-u*0.19, rad-u*0.09, u*0.38, u*0.24);
+    g.fillStyle= 우리? '#8d7b58' : '#7a7364';
+    g.fillRect(-u*0.15, rad-u*0.07, u*0.30, u*0.18);
+    g.restore();
+  }
+  /* ── 집 ──
+     한 채마다 fill 을 부르면 마흔두 고을에 오백 번이 넘는다. 빛깔이 같은 것끼리
+     한 길(path)에 모아 세 번만 부른다 — 한 프레임에서 수 밀리초가 걸린 자리였다. */
+  {
+    const n=Math.min(L.집.length, 2+Math.round((P.dev||0)/3.4));
+    const 새=솟음(P,'house');
+    g.beginPath();                                   // ① 벽
+    for(let i=0;i<n;i++){
+      const [dx,dy,sz]=L.집[i];
+      const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
+      const w=u*0.42*sz, h=u*0.30*sz*k;
+      g.rect(x+dx*u-w/2, y+dy*u-h*0.2, w, h*0.75);
+    }
+    g.fillStyle='rgba(64,56,46,.92)'; g.fill();
+    for(const 기와 of [false,true]){                  // ② 초가 ③ 기와
+      g.beginPath();
+      let 있다=false;
+      for(let i=0;i<n;i++){
+        const [dx,dy,sz,기]=L.집[i];
+        if(!!기!==기와) continue;
+        const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
+        const w=u*0.42*sz, h=u*0.30*sz*k, hx=x+dx*u, hy=y+dy*u;
+        있다=true;
+        if(기와){
+          g.moveTo(hx-w*0.72, hy-h*0.16);
+          g.quadraticCurveTo(hx, hy-h*1.25, hx+w*0.72, hy-h*0.16);
+          g.lineTo(hx+w*0.55, hy-h*0.02); g.lineTo(hx-w*0.55, hy-h*0.02);
+        } else {
+          g.moveTo(hx-w*0.6, hy-h*0.16); g.lineTo(hx, hy-h*1.0); g.lineTo(hx+w*0.6, hy-h*0.16);
+        }
+        g.closePath();
+      }
+      if(!있다) continue;
+      g.fillStyle= 기와? (우리? 'rgba(92,88,96,.95)' : 'rgba(82,80,86,.9)')
+                       : 'rgba(150,128,84,.9)';
+      g.fill();
+    }
+  }
+  /* ── 도읍의 지붕 ── */
+  if(P.cap){
+    const w=u*0.95, h=u*0.62;
+    g.save(); g.translate(x, y-u*0.55);
+    for(let i=0;i<2;i++){
+      const s2=1-i*0.28, yy=-i*h*0.42;
+      g.beginPath();
+      g.moveTo(-w*0.62*s2, yy);
+      g.quadraticCurveTo(0, yy-h*0.72*s2, w*0.62*s2, yy);
+      g.lineTo(w*0.45*s2, yy+h*0.10); g.lineTo(-w*0.45*s2, yy+h*0.10);
+      g.closePath();
+      g.fillStyle= i? 'rgba(124,104,74,.95)' : 'rgba(96,80,60,.95)';
+      g.fill();
+      g.strokeStyle='rgba(30,26,20,.8)'; g.lineWidth=Math.max(0.3,0.5/z); g.stroke();
+    }
+    g.fillStyle='rgba(70,60,48,.95)'; g.fillRect(-w*0.30, 0, w*0.60, h*0.42);
+    g.restore();
+  }
+  /* ── 저자 — 장이 크면 깃발이 는다 ── */
+  if(아주자세히 && P.trade>0){
+    const n=Math.min(L.저자.length, Math.round(P.trade/4.5));
+    const 새=솟음(P,'market');
+    for(let i=0;i<n;i++){
+      const [dx,dy,ph]=L.저자[i];
+      const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
+      const fx2=x+dx*u, fy2=y+dy*u;
+      const 흔들=Math.sin(NOW*2.2+ph*7)*0.10;
+      g.strokeStyle='rgba(50,44,36,.9)'; g.lineWidth=Math.max(0.3,0.55/z);
+      g.beginPath(); g.moveTo(fx2, fy2); g.lineTo(fx2, fy2-u*0.55*k); g.stroke();
+      g.beginPath();
+      g.moveTo(fx2, fy2-u*0.55*k);
+      g.quadraticCurveTo(fx2+u*0.20, fy2-u*0.50*k+흔들*u, fx2+u*0.34, fy2-u*0.40*k);
+      g.lineTo(fx2, fy2-u*0.34*k); g.closePath();
+      g.fillStyle='rgba(196,140,74,.85)'; g.fill();
+    }
+  }
+  /* ── 창대 — 이 고을에 선 군사 ── */
+  if(아주자세히 && 우리 && P.army>0){
+    const n=Math.min(L.창.length, Math.round(Math.pow(P.army/900,0.55)));
+    const 새=솟음(P,'army');
+    for(let i=0;i<n;i++){
+      const [dx,dy,ph]=L.창[i];
+      const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
+      const sx=x+dx*u, sy=y+dy*u;
+      const 흔들=Math.sin(NOW*1.6+ph*9)*0.06;
+      g.strokeStyle='rgba(46,42,36,.9)'; g.lineWidth=Math.max(0.3,0.5/z);
+      g.beginPath(); g.moveTo(sx,sy); g.lineTo(sx+흔들*u, sy-u*0.62*k); g.stroke();
+      g.fillStyle=col;
+      g.beginPath();
+      g.moveTo(sx+흔들*u, sy-u*0.62*k);
+      g.lineTo(sx+흔들*u+u*0.24, sy-u*0.52*k);
+      g.lineTo(sx+흔들*u, sy-u*0.42*k);
+      g.closePath(); g.fill();
+    }
+  }
+  /* ── 배 — 바닷가 고을 ── */
+  if(아주자세히 && tagVal(P,'navy',0)>0.9){
+    const n=Math.min(L.배.length, 1+Math.round(P.trade/9));
+    for(let i=0;i<n;i++){
+      const [dx,dy,ph]=L.배[i];
+      const bx=x+dx*u, by=y+dy*u+Math.sin(NOW*1.1+ph*6)*u*0.05;
+      g.fillStyle='rgba(56,48,38,.9)';
+      g.beginPath(); g.moveTo(bx-u*0.26,by); g.quadraticCurveTo(bx,by+u*0.16,bx+u*0.26,by);
+      g.closePath(); g.fill();
+      g.strokeStyle='rgba(56,48,38,.85)'; g.lineWidth=Math.max(0.3,0.45/z);
+      g.beginPath(); g.moveTo(bx,by); g.lineTo(bx,by-u*0.34); g.stroke();
+      g.fillStyle='rgba(214,206,182,.8)';
+      g.beginPath(); g.moveTo(bx,by-u*0.34); g.lineTo(bx+u*0.19,by-u*0.10); g.lineTo(bx,by-u*0.06);
+      g.closePath(); g.fill();
+    }
+  }
+  /* ── 연기 — 사람이 사는 표 ── */
+  if(자세히 && P.pop>60000){
+    const n=clamp(Math.round((P.dev||0)/16)+1, 1, 2);
+    for(let i=0;i<n;i++){
+      const [dx,dy]=L.집[i*3%L.집.length];
+      const sx=x+dx*u, sy=y+dy*u-u*0.30;
+      for(let j=0;j<2;j++){
+        const t=(NOW*0.32+i*0.4+j*0.5)%1;
+        const a=(1-t)*0.30*(우리?1:0.7);
+        if(a<=0.01) continue;
+        g.fillStyle='rgba(206,200,188,'+a.toFixed(3)+')';
+        g.beginPath();
+        g.arc(sx+Math.sin((t+i)*3.1)*u*0.22, sy-t*u*1.5, u*(0.09+t*0.16), 0, 7);
+        g.fill();
+      }
+    }
+  }
+  /* ── 어지러운 고을은 붉은 기운이 돈다 ── */
+  if(자세히 && 우리 && P.unrest>55){
+    const a=0.10+Math.sin(NOW*2.4)*0.05;
+    g.fillStyle='rgba(196,83,74,'+Math.max(0,a).toFixed(3)+')';
+    g.beginPath(); g.ellipse(x,y,u*1.9,u*1.15,0,0,7); g.fill();
+  }
+  g.restore();
+}
+
 function terrainMarks(g,P){
   const C=CFG.CELL;
   g.save(); g.clip(P._path);
@@ -3796,6 +4112,22 @@ function drawMap(g){
   const 당김 = mapView.zoom>1.2;
   if(!당김) drawCountryLabels(g);
 
+  /* ── 고을 — 이름표보다 먼저 선다 ──
+     보이는 자리의 것만 그린다. 마흔둘을 늘 다 그리면 손전화가 버겁다. */
+  {
+    const V=activeMapView(), z=V.zoom;
+    const x0=V.x-4, y0=V.y-4, x1=V.x+VIEW.w/z+4, y1=V.y+VIEW.h/z+4;
+    // 마을은 뭍에만 선다 — 논이 바다로 흘러나가지 않게 해안선으로 자른다
+    g.save(); g.translate(CFG.GX,CFG.GY); g.clip(MAPVIS.land,'evenodd'); g.translate(-CFG.GX,-CFG.GY);
+    Object.values(G.provs).forEach(P=>{
+      const R=MAPVIS.regions[P.id]; if(!R) return;
+      const c=R.anchor;
+      if(c[0]<x0||c[0]>x1||c[1]<y0||c[1]>y1) return;
+      drawTown(g, P, z);
+    });
+    g.restore();
+  }
+
   Object.values(G.provs).forEach(P=>{
     const R=MAPVIS.regions[P.id], a=MAPVIS.anchors[P.id], cx=a.x, cy=a.y;
     P.cx=R.label[0]; P.cy=R.label[1];
@@ -3826,9 +4158,22 @@ function drawMap(g){
                   : '#eee4cd';
       g.fillText(label,cx,cy);
     }
-    if(P.cap){ const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
+    /* 도읍 표 — 마을이 보이는 배율에서는 궁의 지붕이 이미 서 있다.
+       그 위에 금빛 점을 또 찍으면 애써 그린 마을을 제가 덮는다.
+       멀리서 볼 때만 점으로 알린다. */
+    if(P.cap && mapView.zoom<1.5){
+      const cap=R.capital||[R.label[0],R.label[1]-10], qx=CFG.GX+cap[0], qy=CFG.GY+cap[1];
       g.fillStyle='#d7b66f'; g.strokeStyle='rgba(20,17,14,.95)'; g.lineWidth=1.1*inv; g.beginPath();
-      g.arc(qx,qy,3.3/Math.sqrt(mapView.zoom),0,Math.PI*2); g.fill(); g.stroke(); }
+      g.arc(qx,qy,3.3/Math.sqrt(mapView.zoom),0,Math.PI*2); g.fill(); g.stroke();
+    } else if(P.cap){
+      // 가까이서는 궁 둘레에 옅은 빛만 — 숨 쉬듯 뛴다
+      const q=MAPVIS.regions[P.id];
+      const qx=CFG.GX+q.anchor[0], qy=CFG.GY+q.anchor[1];
+      const u2=1.15*townScale(P);
+      const a2=0.13+Math.sin(NOW*1.5)*0.05;
+      g.fillStyle='rgba(224,189,118,'+Math.max(0,a2).toFixed(3)+')';
+      g.beginPath(); g.ellipse(qx,qy,u2*2.3,u2*1.45,0,0,7); g.fill();
+    }
     // 어지러움·수령 표는 이름 옆에 붙어 있어야 한다.
     // 자리까지 확대에 딸려 가면 이름에서 멀찍이 떨어져 누구 것인지 알 수 없다.
     if(showName&&P.unrest>55){ g.fillStyle=PAL.red; g.beginPath(); g.arc(cx+14*inv,cy-3*inv,2.5*inv,0,7); g.fill(); }

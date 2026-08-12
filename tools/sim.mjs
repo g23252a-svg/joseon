@@ -117,7 +117,11 @@ function makeSandbox(rng){
     },
     Image: class { constructor(){ this.width = 0; this.height = 0; }
                    set src(v){ this._src = v; } get src(){ return this._src; } },
-    Path2D: class { constructor(){} addPath(){} moveTo(){} lineTo(){} closePath(){} },
+    Path2D: class { constructor(){} addPath(){} moveTo(){} lineTo(){} closePath(){}
+                    rect(){} arc(){} quadraticCurveTo(){} },
+    /* 마을의 논을 한 길로 모을 때 쓴다 — 자리를 옮겨 붙이는 데만 쓰므로 흉내면 된다 */
+    DOMMatrix: class { constructor(){} translate(){ return this; } rotate(){ return this; }
+                       scale(){ return this; } },
     __store: store
   };
   sandbox.Math.random = rng;
