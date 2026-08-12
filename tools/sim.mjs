@@ -11,6 +11,7 @@
      node tools/sim.mjs --plan good     — 한 가지 두는 법만
      node tools/sim.mjs --seed 7        — 씨앗을 고정한다
      node tools/sim.mjs --trace         — 해마다 한 줄씩 찍는다
+     node tools/sim.mjs --diff 0        — 난이도 (0 순한맛 · 1 보통 · 2 매운맛)
    ================================================================ */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,7 @@ const PLAN  = arg('plan', null);
 const SEED  = arg('seed', null);
 const TRACE = !!arg('trace', false);
 const QUIET = !!arg('quiet', false);
+const DIFF  = arg('diff', null);      // 0 순한맛 / 1 보통 / 2 매운맛
 
 /* ---------------------------------------------------------------- 난수 */
 /* Math.random을 갈아 끼워 같은 씨앗이면 같은 판이 나오게 한다 */
@@ -75,7 +77,7 @@ function fakeCanvas(w, h){
 /* 캔버스 밖의 조각들 — 고을 선택 상자와 화면 읽기용 알림 */
 function fakeElement(tag){
   return {
-    tagName: (tag || 'div').toUpperCase(), style: {}, children: [],
+    tagName: (tag || 'div').toUpperCase(), style: {}, dataset: {}, children: [],
     hidden: false, value: '', textContent: '', disabled: false,
     addEventListener(){}, removeEventListener(){},
     appendChild(child){ this.children.push(child); return child; },
@@ -115,7 +117,11 @@ function makeSandbox(rng){
     },
     Image: class { constructor(){ this.width = 0; this.height = 0; }
                    set src(v){ this._src = v; } get src(){ return this._src; } },
-    Path2D: class { constructor(){} addPath(){} moveTo(){} lineTo(){} closePath(){} },
+    Path2D: class { constructor(){} addPath(){} moveTo(){} lineTo(){} closePath(){}
+                    rect(){} arc(){} quadraticCurveTo(){} },
+    /* 마을의 논을 한 길로 모을 때 쓴다 — 자리를 옮겨 붙이는 데만 쓰므로 흉내면 된다 */
+    DOMMatrix: class { constructor(){} translate(){ return this; } rotate(){ return this; }
+                       scale(){ return this; } },
     __store: store
   };
   sandbox.Math.random = rng;
@@ -162,6 +168,7 @@ function boot(seed){
   const get  = n => sandbox.__GET(n);
   const call = (n, ...a) => sandbox.__CALL(n, a);
   const ev   = s => sandbox.__EVAL(s);
+  if(DIFF != null) ev('START_DIFF=' + (+DIFF));    // 난이도를 고른 뒤에 판을 연다
   return { sandbox, get, call, ev, rng };
 }
 
@@ -171,6 +178,8 @@ function boot(seed){
 function uiCheck(){
   const api = boot(4242);
   let fail = 0, ran = 0;
+  /* 화면 크기를 바꿔 가며 본다 — 손전화 판이 생긴 뒤로는 한 벌만 봐서는 모른다 */
+  const 화면 = (w,h) => { api.sandbox.innerWidth=w; api.sandbox.innerHeight=h; api.call('resize'); };
   const shot = (label, setup) => {
     try{
       setup();
@@ -266,6 +275,26 @@ function uiCheck(){
     G.popup = { kind:'end', title:'육백 년', body:'여기까지 왔다.', y:2025, total:900, rank:2 };
   });
 
+  /* 세 가지 판 크기에서 모든 탭과 창을 한 번씩 */
+  [[1280,720,'넓은 판'],[900,520,'좁은 판'],[390,844,'세로 판(손전화)']].forEach(([w,h,nm])=>{
+    화면(w,h);
+    shot(nm+' · 제목', () => api.ev("SCENE='title'; MENU=null;"));
+    TABS.forEach(t => shot(nm+' · '+t, () => {
+      api.ev("SCENE='play'; MENU=null;");
+      G.tab=t; G.sel='hans'; G.popup=null; G.report=null;
+    }));
+    shot(nm+' · 고을 안 고름', () => { G.sel=null; });
+    shot(nm+' · 남의 고을', () => { G.sel='liao'; });
+    shot(nm+' · 결산', () => { api.call('endTurn'); });
+    shot(nm+' · 사건', () => { G.report=null; G.popup={kind:'choice', ev:api.get('EVENTS')[0], y:G.year}; });
+    shot(nm+' · 메뉴', () => { G.popup=null; api.ev("MENU={tab:null};"); });
+    shot(nm+' · 소리', () => api.ev("MENU={tab:'sound'};"));
+    shot(nm+' · 기록', () => api.ev("MENU={tab:'records'};"));
+    shot(nm+' · 결말', () => { api.ev("MENU=null;");
+      G.popup={kind:'end',title:'육백 년',body:'여기까지 왔다.',y:2025,total:900,rank:1}; });
+  });
+  화면(1280,720);
+
   console.log(fail ? `\n화면 점검 — ${ran}개 그림, ${fail}개 터짐`
                    : `화면 점검 — ${ran}개 화면 모두 그려짐`);
   return fail;
@@ -311,13 +340,16 @@ function saveCheck(){
 }
 function snapshot(G){
   return {
-    year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol,
+    year:G.year, era:G.era, turn:G.turn, legit:G.legit, byeol:G.byeol, saheWait:G.saheWait,
     tab:G.tab, sel:G.sel, view:G.view, mapMode:G.mapMode, mapFocus:G.mapFocus,
     mapZoom:G.mapZoom, mapPan:G.mapPan,
     policies:G.policies, polSince:G.polSince, factions:G.factions,
     scores:G.scores, evDone:G.evDone,
     '연구':{ pt:G.res.pt, done:G.res.done },
     '외교':G.dip,
+    '이웃끼리':G.cj,
+    '임금':{ king:G.king, gen:G.gen, genN:G.genN, edict:G.edict },
+    '치세':{ reign:G.reign, reigns:G.reigns },
     '국고':G.nations.kor.gold, '식량':G.nations.kor.food, '기술':G.nations.kor.tech,
     '신하':G.officials.map(o=>o.nm+':'+o.post+':'+Math.round(o.loy)).sort(),
     '고을':Object.entries(G.provs).map(([k,p])=>
@@ -375,9 +407,9 @@ const PLANS = {
           const a = ACTIONS.find(x => x.id === id);
           if(!a || !a.need(p)) return;
           if((N.adm || 0) < a.adm) return;
-          const c = api.call('actCost', a, p);
-          if(N.gold < c * 1.5) return;
-          N.gold -= c; N.adm -= a.adm; a.run(p); did = true;
+          const q = api.call('actQuote', a, p);
+          if(!q.ok || N.gold < q.c * 1.5) return;
+          api.call('pay', q, a.adm, () => a.run(p)); did = true;
         };
         if(hot.unrest > 45) tryAct('jin', hot);
         if(!did){
@@ -467,18 +499,54 @@ const PLANS = {
           const o = api.call('warOdds', p);
           if(o && o.p > bp){ bp = o.p; best = p; }
         });
-        if(best && bp > 0.62 && (N.adm||0) >= gong.adm){
-          const c = api.call('actCost', gong, best);
-          if(N.gold >= c){
-            N.gold -= c; N.adm -= gong.adm; gong.run(best); api.call('recalc'); continue;
-          }
+        if(best && bp > 0.62){
+          const q = api.call('actQuote', gong, best);
+          if(q.ok){ api.call('pay', q, gong.adm, () => gong.run(best)); continue; }
         }
         /* 못 이길 것 같으면 군사를 불린다 */
         const mine = api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop);
         if(!mine.length || (N.adm||0) < mo.adm) break;
-        const p = mine[0], c = api.call('actCost', mo, p);
-        if(N.gold < c * 1.2) break;
-        N.gold -= c; N.adm -= mo.adm; mo.run(p); api.call('recalc');
+        const p = mine[0], q = api.call('actQuote', mo, p);
+        if(!q.ok || N.gold < q.c * 1.2) break;
+        api.call('pay', q, mo.adm, () => mo.run(p));
+      }
+    }
+  },
+  /* 밀어붙인다 — 사람이 작정하고 두는 흉내.
+     정무를 다 쓰면 별칙으로 국고를 태우고, 이길 낌새가 반만 넘어도 친다.
+     "얼마나 빨리 다 먹을 수 있나"의 상한을 재기 위한 두는 법이다. */
+  rush: {
+    nm: '밀어붙임',
+    play(api){
+      const G = api.get('G'), N = G.nations.kor;
+      api.call('autoAssign');
+      const ACTIONS = api.get('ACTIONS');
+      const gong = ACTIONS.find(a => a.id === 'gong');
+      const mo   = ACTIONS.find(a => a.id === 'mo');
+      /* 정무가 남으면 정무로, 다 썼으면 별칙으로 — 화면의 규칙 그대로 */
+      /* 화면이 쓰는 규칙을 그대로 쓴다 — 싸움은 별칙으로 살 수 없다 */
+      const 지른다 = (act, p) => {
+        const q = api.call('actQuote', act, p);
+        if(!q.ok) return false;
+        api.call('pay', q, act.adm, () => act.run(p));
+        return true;
+      };
+      let guard = 0;
+      while(guard++ < 60){
+        let best = null, bp = 0;
+        Object.values(G.provs).forEach(p => {
+          if(!gong.need(p)) return;
+          const o = api.call('warOdds', p);
+          if(o && o.p > bp){ bp = o.p; best = p; }
+        });
+        if(best && bp > 0.50){ if(지른다(gong, best)) continue; }
+        /* 못 이길 것 같으면 국경 고을에 군사를 몰아넣는다 */
+        const 국경 = api.call('natProvs','kor')
+          .filter(p => mo.need(p) && [...p.adj].some(id => G.provs[id] && G.provs[id].nat !== 'kor'))
+          .sort((a,b) => b.pop - a.pop);
+        const 대상 = 국경[0] || api.call('natProvs','kor').filter(p => mo.need(p)).sort((a,b)=>b.pop-a.pop)[0];
+        if(!대상) break;
+        if(!지른다(mo, 대상)) break;
       }
     }
   },
@@ -501,6 +569,25 @@ const PLANS = {
         if(!d.trade && d.rel >= 25){ if(use('trade')) continue; }
         if(d.rel < 30) use('envoy');
       }
+    }
+  },
+  /* 이간 — 남을 붙여 놓고 그 틈에 민다.
+     '밀어붙임'과 같은 손을 쓰되, 이웃끼리 손을 잡으려 하면 먼저 벌려 놓는다.
+     새로 놓은 층에 정말 대응할 수 있는지, 그 값이 되는지를 재기 위한 두는 법이다. */
+  wedge: {
+    nm: '이간질',
+    play(api){
+      const G = api.get('G'), N = G.nations.kor, C = G.cj;
+      /* 이웃이 손을 잡을 낌새면 먼저 벌린다 — 명령보다 앞선다 */
+      if(C){
+        const a = api.call('cjActs').find(x => x.id === 'wedge');
+        /* 사람이라면 늘 벌리지는 않는다 — 둘이 가까워질 때만 손을 쓴다.
+           해마다 정무 둘과 180전을 태우면 그것만으로 나라가 기운다. */
+        if(a && a.can() && (N.adm||0) >= a.adm && N.gold >= a.cost*2 && C.rel > 20){
+          N.gold -= a.cost; N.adm -= a.adm; a.run();
+        }
+      }
+      PLANS.rush.play(api);
     }
   }
 };
@@ -527,10 +614,25 @@ function runOne(planKey, seed){
   api.call('newGame');
   const G = api.get('G');
   const trace = [];
+  /* 즉위 교서 — 사람이 고르는 자리다. 시뮬레이터는 두는 법에 맞는 것을 집는다. */
+  const 교서고르기 = () => {
+    if(!G.popup || G.popup.kind !== 'accede') return;
+    const picks = G.popup.picks || [];
+    const 바람 = { idle:[], govern:['inj','nong'], good:['inj','hak','nong','jae'],
+                  conquer:['mu','jae'], rush:['mu','jae'], envoy:['gyo','inj'],
+                  wedge:['mu','gyo'] }[planKey] || [];
+    let e = picks.find(p => 바람.includes(p.id)) || picks[0];
+    if(e) G.edict = e.id;
+    G.popup = null;
+  };
+  교서고르기();
 
   let year = G.year, guard = 0;
   /* 언제 얼마나 먹었는지 — 정복이 너무 쉬운지 재는 눈금 */
   let peak = 0, y30 = null, yAll = null;
+  /* 이웃끼리의 사이 — 명과 일본이 서로 얼마나 붙고 얼마나 손을 잡는지.
+     조선만 보는 눈으로는 이 층이 도는지 알 수가 없다. */
+  let cjWars = 0, cjWarY = 0, cjAllyY = 0, cjWas = false, cjFirst = null;
   while(!G.ended && G.year < 2025 && guard++ < 900){
     try { plan.play(api); }
     catch(e){ return { err: '두는 중 오류: ' + e.message + '\n' + e.stack, year: G.year }; }
@@ -540,6 +642,9 @@ function runOne(planKey, seed){
 
     /* 결산과 사건을 사람 대신 넘긴다 */
     G.report = null;
+    /* 치세가 끝난 자리와 즉위 — 사람이 덮고 고를 자리다 */
+    if(G.pendingReign) G.pendingReign = null;
+    교서고르기();
     if(G.pendingEvent){
       const ev = G.pendingEvent;
       const i = pickChoice(ev, planKey === 'idle' ? 'worst' : 'best');
@@ -547,7 +652,14 @@ function runOne(planKey, seed){
       G.pendingEvent = null;
     }
     if(G.popup && G.popup.kind !== 'end') G.popup = null;
+    if(G.pendingReign) G.pendingReign = null;
 
+    const C = G.cj;
+    if(C){
+      if(C.war){ cjWarY++; if(!cjWas){ cjWars++; if(cjFirst==null) cjFirst=G.year; } }
+      cjWas = C.war;
+      if(C.ally) cjAllyY++;
+    }
     const np = api.call('natProvs','kor').length;
     if(np > peak) peak = np;
     if(y30 === null && np >= 30) y30 = G.year;
@@ -565,7 +677,7 @@ function runOne(planKey, seed){
   const N = G.nations.kor;
   const total = G.scores.reduce((a, s) => a + s.pt, 0);
   return {
-    year, total, peak, y30, yAll,
+    year, total, peak, y30, yAll, cjWars, cjWarY, cjAllyY, cjFirst,
     scores: G.scores.map(s => `${s.era} ${s.pt}(${s.등급})`),
     prov: api.call('natProvs','kor').length,
     ended: !!G.ended,
@@ -615,17 +727,26 @@ for(const k of keys){
       year: avg(r => r.year), total: avg(r => r.total), prov: avg(r => r.prov),
       peak: avg(r => r.peak),
       y30: got30.length ? Math.round(got30.reduce((s,r)=>s+r.y30,0)/got30.length) + '년' : '—',
-      done: rows.filter(r => r.year >= 2025).length + '/' + rows.length
+      done: rows.filter(r => r.year >= 2025).length + '/' + rows.length,
+      cjWars: avg(r => r.cjWars), cjWarY: avg(r => r.cjWarY), cjAllyY: avg(r => r.cjAllyY)
     });
   }
 }
 
-console.log('\n── 요약 ──');
+console.log('\n── 요약 ──' + (DIFF!=null? '  (난이도 '+['순한맛','보통','매운맛'][+DIFF]+')' : ''));
 console.log('두는 법        평균 끝난 해   평균 점수   평균 고을   최대 고을   30고을   완주');
 summary.forEach(s => {
   console.log(`${s.nm.padEnd(12)} ${String(s.year).padStart(8)} ${String(s.total).padStart(11)} ` +
               `${String(s.prov).padStart(11)} ${String(s.peak).padStart(11)} ` +
               `${String(s.y30).padStart(8)} ${s.done.padStart(7)}`);
+});
+
+/* 이웃끼리 — 이 층이 실제로 도는지 */
+console.log('\n── 명과 일본 사이 ──');
+console.log('두는 법        서로 전쟁(번)   전쟁으로 보낸 해   서로 동맹한 해');
+summary.forEach(s => {
+  console.log(`${s.nm.padEnd(12)} ${String(s.cjWars).padStart(10)} ` +
+              `${String(s.cjWarY).padStart(15)} ${String(s.cjAllyY).padStart(14)}`);
 });
 
 if(bad){ console.error(`\n${bad}판이 터졌다.`); process.exit(1); }
