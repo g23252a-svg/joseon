@@ -212,7 +212,11 @@ function uiCheck(){
     api.ev("SCENE='play'; MENU=null;");
     G.sel = 'liao'; G.popup = null; G.report = null;
   });
-  shot('놀이 · 민심 보기', () => { G.view = 'unrest'; });
+  /* 실록 — 네 쪽을 다 펴 본다 */
+  [0,1,2,3].forEach(i => shot('실록 · ' + api.get('SAGA_TABS')[i], () => {
+    api.ev("SCENE='play'; MENU={tab:'saga'}; SAGAPG=" + i + "; SAGASC=0;");
+  }));
+  shot('놀이 · 민심 보기', () => { api.ev("MENU=null;"); G.view = 'unrest'; });
   shot('놀이 · 정치 지도', () => { G.mapMode = 'political'; G.view = 'nat'; });
   shot('놀이 · 동아시아 전체', () => api.call('setMapPreset', 'all'));
   shot('놀이 · 한반도 확대', () => api.call('setMapPreset', 'korea'));
@@ -350,6 +354,7 @@ function snapshot(G){
     '이웃끼리':G.cj,
     '임금':{ king:G.king, gen:G.gen, genN:G.genN, edict:G.edict },
     '치세':{ reign:G.reign, reigns:G.reigns },
+    '실록':G.saga,
     '국고':G.nations.kor.gold, '식량':G.nations.kor.food, '기술':G.nations.kor.tech,
     '신하':G.officials.map(o=>o.nm+':'+o.post+':'+Math.round(o.loy)).sort(),
     '고을':Object.entries(G.provs).map(([k,p])=>
