@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -4126,6 +4126,150 @@ function drawSeaRoutes(g){
   }); g.setLineDash([]); g.restore();
 }
 
+/* ================================================================
+   길 — 조운길 · 교역로 · 철길
+   ----------------------------------------------------------------
+   특산과 통상은 숫자로만 있었다. 인삼을 팔아도 지도에는 아무 일이 없고,
+   세곡이 한성으로 올라와도 그 길이 어디로 나 있는지 알 수 없었다.
+   나라가 무엇으로 이어져 있는지가 안 보이면, 고을 하나를 잃는 것이
+   장부에서 한 줄이 빠지는 일로만 보인다.
+
+   길 셋을 그린다.
+     조운길  고을마다 거둔 것이 도읍으로 흘러간다. 도읍에 가까울수록 굵다.
+     교역로  통상 조약을 맺은 나라로 물건이 나가고 돈이 들어온다.
+     철길    식민 시대부터 큰 고을 사이의 줄기가 철길이 된다.
+
+   길은 나라의 이웃 관계에서 도읍을 뿌리로 한 나무를 세워 놓는다.
+   그러니 고을을 잃으면 그 너머의 길이 통째로 끊긴다 — 실제로 그렇다.
+   ================================================================ */
+let ROUTE=null, ROUTEKEY='';
+function routeNet(){
+  const cap=G.provs.hans;
+  const mine=natProvs('kor');
+  const key=mine.map(p=>p.id).sort().join(',')+'|'+(cap&&cap.nat==='kor'?1:0);
+  if(!ROUTE || ROUTEKEY!==key){
+    ROUTEKEY=key;
+    ROUTE={ edges:[], parent:{}, order:[] };
+    if(cap && cap.nat==='kor'){
+      /* 도읍에서 뻗어 나가는 나무 — 이웃을 따라 넓이 우선으로 */
+      const 봤다={hans:1}, 줄=['hans'];
+      ROUTE.order.push('hans');
+      for(let i=0;i<줄.length;i++){
+        const a=줄[i];
+        [...G.provs[a].adj].forEach(b=>{
+          const q=G.provs[b];
+          if(!q || q.nat!=='kor' || 봤다[b]) return;
+          봤다[b]=1; ROUTE.parent[b]=a; 줄.push(b); ROUTE.order.push(b);
+          ROUTE.edges.push({ a, b, sea:!!SEA_LINK[a+'|'+b] });
+        });
+      }
+    }
+  }
+  /* 흐름 — 잎에서 뿌리로 더해 올라간다. 도읍 가까운 줄기가 굵어진다. */
+  const 몫={};
+  ROUTE.order.forEach(id=>{
+    const P=G.provs[id];
+    몫[id]= P? (P.farm*0.6 + P.trade*0.5) * (isCore(P)? 1 : 0.45)
+                * (1 - clamp(P.unrest,0,100)/150) : 0;
+  });
+  const 흐름={};
+  for(let i=ROUTE.order.length-1;i>=0;i--){
+    const id=ROUTE.order[i];
+    흐름[id]=(흐름[id]||0)+몫[id];
+    const p=ROUTE.parent[id];
+    if(p) 흐름[p]=(흐름[p]||0)+흐름[id];
+  }
+  ROUTE.flow=흐름;
+  return ROUTE;
+}
+/* 교역로 — 어느 고을에서 나가 어느 고을로 닿는가 */
+const TRADE_LANE={
+  chn:[['pyab','liao'],['hwan','shan']],
+  jpn:[['gyen','tsus'],['jeon','kyus']]
+};
+function drawRoutes(g, z){
+  if(!G.provs.hans) return;
+  const inv=1/z;
+  const A=id=>{ const R=MAPVIS.regions[id]; return R? R.anchor : null; };
+  const R2=routeNet();
+  const 철길때 = G.era>=4;                       // 1910 — 실제로 그 무렵 놓였다
+  g.save(); g.translate(CFG.GX,CFG.GY);
+  g.lineCap='round'; g.lineJoin='round';
+
+  /* ── 조운길 ── */
+  R2.edges.forEach((e,i)=>{
+    const p=A(e.a), q=A(e.b); if(!p||!q) return;
+    const f=R2.flow[e.b]||0;
+    if(f<0.5) return;
+    const 굵기=clamp(Math.pow(f,0.42)*0.30, 0.28, 2.2);
+    const 철 = 철길때 && 굵기>0.9 && !e.sea;
+    // 길바닥
+    g.setLineDash(e.sea? [3*inv,4*inv] : []);
+    g.strokeStyle= e.sea? 'rgba(126,176,192,.42)'
+                 : 철? 'rgba(40,36,32,.72)' : 'rgba(120,100,66,.46)';
+    g.lineWidth=(굵기+ (철?0.5:0.25))*inv*2;
+    g.beginPath(); g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); g.stroke();
+    if(!e.sea){
+      g.strokeStyle= 철? 'rgba(176,168,156,.72)' : 'rgba(196,170,116,.5)';
+      g.lineWidth=굵기*inv*2*0.55;
+      g.beginPath(); g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); g.stroke();
+    }
+    // 침목 — 철길임을 알아보게
+    if(철 && z>=3.0){        // 침목은 가까이서만 — 멀리서는 선 굵기로 충분하다
+      const dx=q[0]-p[0], dy=q[1]-p[1], L=Math.hypot(dx,dy);
+      const nx=-dy/L, ny=dx/L, 칸=Math.max(3, 4);
+      g.strokeStyle='rgba(40,36,32,.6)'; g.lineWidth=0.5*inv*2;
+      g.beginPath();
+      for(let t=칸/2;t<L;t+=칸){
+        const cx=p[0]+dx*(t/L), cy=p[1]+dy*(t/L);
+        g.moveTo(cx-nx*굵기*1.1, cy-ny*굵기*1.1);
+        g.lineTo(cx+nx*굵기*1.1, cy+ny*굵기*1.1);
+      }
+      g.stroke();
+    }
+    g.setLineDash([]);
+    // 흐르는 것 — 세곡이 도읍으로 올라간다
+    if(z>=1.6){
+      const n=clamp(Math.round(굵기*1.2),1,2);
+      for(let j=0;j<n;j++){
+        const t=((NOW*0.16+i*0.21+j*0.34)%1);
+        const cx=lerp(q[0],p[0],t), cy=lerp(q[1],p[1],t);   // 잎 → 뿌리
+        g.fillStyle= 철? 'rgba(224,196,140,.85)' : 'rgba(214,190,132,.7)';
+        g.beginPath(); g.arc(cx,cy,(0.5+굵기*0.22)*inv*2,0,7); g.fill();
+      }
+    }
+  });
+
+  /* ── 교역로 ── */
+  DIP_NATS.forEach((k,ki)=>{
+    const d=dipOf(k); if(!d || !d.trade) return;
+    const 끊김=d.war;
+    (TRADE_LANE[k]||[]).forEach(([a,b],i)=>{
+      const PA=G.provs[a], PB=G.provs[b];
+      if(!PA||!PB||PA.nat!=='kor') return;
+      const p=A(a), q=A(b); if(!p||!q) return;
+      const mx=(p[0]+q[0])/2, my=(p[1]+q[1])/2 - Math.hypot(q[0]-p[0],q[1]-p[1])*0.18;
+      g.setLineDash(끊김? [2*inv,5*inv] : [5*inv,4*inv]);
+      g.strokeStyle= 끊김? 'rgba(196,83,74,.45)' : 'rgba(224,189,118,.5)';
+      g.lineWidth=1.0*inv*2;
+      g.beginPath(); g.moveTo(p[0],p[1]); g.quadraticCurveTo(mx,my,q[0],q[1]); g.stroke();
+      g.setLineDash([]);
+      if(끊김 || z<1.6) return;
+      // 물건이 나가고 돈이 들어온다
+      for(let j=0;j<2;j++){
+        for(const 방향 of [0,1]){
+          let t=((NOW*0.20+i*0.3+j*0.33+ki*0.17)%1);
+          if(방향) t=1-t;
+          const s=1-t, cx=s*s*p[0]+2*s*t*mx+t*t*q[0], cy=s*s*p[1]+2*s*t*my+t*t*q[1];
+          g.fillStyle= 방향? 'rgba(232,206,140,.85)' : 'rgba(150,190,130,.8)';
+          g.beginPath(); g.arc(cx,cy,0.9*inv*2,0,7); g.fill();
+        }
+      }
+    });
+  });
+  g.restore();
+}
+
 function drawCountryLabels(g){
   const political=G.mapMode==='political';
   const labels={chn:{x:350,y:248,size:58,angle:-.04},kor:{x:642,y:235,size:34,angle:1.08},jpn:{x:758,y:238,size:27,angle:-.58}};
@@ -4203,6 +4347,9 @@ function drawMap(g){
   // 확대하면 큰 국호는 화면 밖으로 나가 조각만 보인다. 그때는 걷는다.
   const 당김 = mapView.zoom>1.2;
   if(!당김) drawCountryLabels(g);
+
+  /* 길은 마을 밑으로 지나간다 */
+  drawRoutes(g, activeMapView().zoom);
 
   /* ── 고을 — 이름표보다 먼저 선다 ──
      보이는 자리의 것만 그린다. 마흔둘을 늘 다 그리면 손전화가 버겁다. */
