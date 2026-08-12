@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -3504,7 +3504,9 @@ function townLayout(P){
   // 집 — 가운데에 모이고 바깥으로 퍼진다
   for(let i=0;i<16;i++){
     const a=r()*Math.PI*2, d=(0.35+Math.sqrt(i/16)*1.5)*(0.8+r()*0.5);
-    집.push([Math.cos(a)*d, Math.sin(a)*d*0.62, 0.8+r()*0.5, r()<0.34]);
+    /* 넷째 값은 '기와냐'가 아니라 그냥 주사위 하나다 —
+       무슨 지붕을 일지는 시대가 정한다(eraFace). 자리는 그대로 두고 얼굴만 바뀐다. */
+    집.push([Math.cos(a)*d, Math.sin(a)*d*0.62, 0.8+r()*0.5, r()]);
   }
   // 논 — 마을 바깥의 네모난 뙈기
   for(let i=0;i<14;i++){
@@ -3518,6 +3520,36 @@ function townLayout(P){
   for(let i=0;i<10;i++){ const a=r()*Math.PI*2, d=1.3+r()*0.9;
     창.push([Math.cos(a)*d, Math.sin(a)*d*0.6, r()]); }
   return (TOWNLAY[P.id]={집,논,저자,배,창});
+}
+/* ================================================================
+   시대의 얼굴
+   ----------------------------------------------------------------
+   1392년 지도와 1988년 지도가 초가 지붕 말고는 똑같았다. 육백 년을 지났다는
+   실감이 나려면 지도가 늙어야 한다.
+
+   자리는 건드리지 않는다. 같은 집이 초가에서 기와로, 벽돌로, 콘크리트로
+   바뀔 뿐이다. 성벽은 개항 뒤에 헐리고, 그 자리에 굴뚝이 선다.
+   ================================================================ */
+function eraFace(){
+  const e=(G&&G.era)||0;
+  return {
+    e,
+    초가: e<=1? 0.62 : e===2? 0.42 : e===3? 0.22 : e===4? 0.08 : 0,
+    양옥: e>=3,          // 벽돌·양식 건물이 섞이기 시작한다
+    상자: e>=5,          // 네모난 콘크리트
+    굴뚝: e>=4,          // 공장 굴뚝
+    기선: e>=3,          // 돛 대신 연통
+    성헐림: e>=4,        // 성벽이 헐린다 — 그림만 그렇고 셈은 그대로다
+    논빛: e>=6? 'rgba(120,140,86,.5)' : 'rgba(126,148,74,.62)',
+    몸빛: e>=5? 'rgba(104,100,96,.92)' : 'rgba(64,56,46,.92)'
+  };
+}
+/* 이 집은 무슨 지붕을 이었는가 — 주사위 하나와 시대로 정한다 */
+function roofKind(r, F){
+  if(F.상자 && r>0.42) return '평';       // 평지붕 콘크리트
+  if(F.양옥 && r>0.74) return '벽';       // 벽돌 양옥
+  if(r < F.초가) return '초';
+  return '와';
 }
 /* 마을의 크기 — 사람과 개발이 정한다 */
 function townScale(P){
@@ -3539,7 +3571,7 @@ function drawTown(g, P, z){
   /* 자리는 R.anchor 다. label 은 글자를 놓는 자리라 바다로 밀려 있는 것이 있다 —
      처음에 그것을 썼더니 개성이 바다 한가운데에 성을 쌓았다. */
   const x=CFG.GX+R.anchor[0], y=CFG.GY+R.anchor[1];
-  const S=townScale(P), L=townLayout(P);
+  const S=townScale(P), L=townLayout(P), F=eraFace();
   const 우리=P.nat==='kor';
   const col=NATIONS[P.nat].col, col2=NATIONS[P.nat].col2;
   /* 확대에 따라 보이는 것이 달라진다 —
@@ -3581,27 +3613,33 @@ function drawTown(g, P, z){
       for(let j=1;j<3;j++){ two.moveTo(-w/2, -h/2+h*j/3); two.lineTo(w/2, -h/2+h*j/3); }
       이랑.addPath(two, m);
     }
-    g.fillStyle= 우리? 'rgba(126,148,74,.62)' : 'rgba(104,118,72,.42)';
+    g.fillStyle= 우리? F.논빛 : 'rgba(104,118,72,.42)';
     g.fill(뙈기);
     g.lineWidth=Math.max(0.3,0.5/z);
     g.strokeStyle='rgba(52,58,34,.5)'; g.stroke(뙈기);
     g.strokeStyle='rgba(70,86,44,.45)'; g.stroke(이랑);
   }
-  /* ── 성벽 — 남문을 비운 고리 ── */
+  /* ── 성벽 — 남문을 비운 고리.
+     개항 뒤로는 헐린다. 셈에서 성곽은 그대로 값을 하지만(규칙은 건드리지 않는다)
+     그림으로는 끊긴 토막과 남은 문루만 남는다 — 실제로 그러했다. */
   if(P.fort>0){
     const 새=솟음(P,'wall');
     const rad=u*(1.05+P.fort*0.055);
-    const 두께=Math.max(0.5, 0.5+P.fort*0.15);
+    const 두께=Math.max(0.5, (0.5+P.fort*0.15)*(F.성헐림? 0.62 : 1));
     const 문=0.32;                                   // 남쪽으로 열린 문
+    const 흐림=F.성헐림? 0.42 : 1;
     g.save(); g.translate(x,y); g.scale(1,0.60);
     g.lineCap='butt';
-    g.strokeStyle='rgba(30,27,22,.9)'; g.lineWidth=두께+0.8;
+    if(F.성헐림) g.setLineDash([rad*0.5, rad*0.42]);
+    g.strokeStyle='rgba(30,27,22,'+(0.9*흐림).toFixed(2)+')'; g.lineWidth=두께+0.8;
     g.beginPath(); g.arc(0,0,rad, Math.PI/2+문, Math.PI/2-문+Math.PI*2); g.stroke();
-    g.strokeStyle= 우리? 'rgba(176,162,132,.95)' : 'rgba(136,128,112,.8)';
+    g.strokeStyle= 우리? 'rgba(176,162,132,'+(0.95*흐림).toFixed(2)+')'
+                       : 'rgba(136,128,112,'+(0.8*흐림).toFixed(2)+')';
     g.lineWidth=두께;
     g.beginPath(); g.arc(0,0,rad, Math.PI/2+문, Math.PI/2-문+Math.PI*2); g.stroke();
+    g.setLineDash([]);
     // 망루 — 성곽 수만큼. 마지막 하나는 새로 쌓은 것이라 솟아오른다.
-    const 망=Math.min(9,P.fort+2);
+    const 망=F.성헐림? Math.min(3,P.fort) : Math.min(9,P.fort+2);
     for(let i=0;i<망;i++){
       const a=Math.PI/2+문 + (i/(망-0.001))*(Math.PI*2-문*2);
       const k=(i===망-1)? 새 : 1;
@@ -3625,36 +3663,74 @@ function drawTown(g, P, z){
   {
     const n=Math.min(L.집.length, 2+Math.round((P.dev||0)/3.4));
     const 새=솟음(P,'house');
-    g.beginPath();                                   // ① 벽
+    /* 몸체 — 콘크리트 시대의 것은 높이 선다 */
+    g.beginPath();
     for(let i=0;i<n;i++){
-      const [dx,dy,sz]=L.집[i];
+      const [dx,dy,sz,rr]=L.집[i];
       const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
-      const w=u*0.42*sz, h=u*0.30*sz*k;
-      g.rect(x+dx*u-w/2, y+dy*u-h*0.2, w, h*0.75);
+      const 꼴=roofKind(rr,F);
+      const w=u*0.42*sz, h=u*0.30*sz*k*(꼴==='평'? 2.1 : 1);
+      g.rect(x+dx*u-w/2, y+dy*u-h*(꼴==='평'? 0.75 : 0.2), w, h*(꼴==='평'? 1.0 : 0.75));
     }
-    g.fillStyle='rgba(64,56,46,.92)'; g.fill();
-    for(const 기와 of [false,true]){                  // ② 초가 ③ 기와
+    g.fillStyle=F.몸빛; g.fill();
+    /* 창 — 상자 시대의 집에는 불이 켜져 있다 */
+    if(F.상자){
       g.beginPath();
-      let 있다=false;
       for(let i=0;i<n;i++){
-        const [dx,dy,sz,기]=L.집[i];
-        if(!!기!==기와) continue;
+        const [dx,dy,sz,rr]=L.집[i];
+        if(roofKind(rr,F)!=='평') continue;
+        const k=(i===n-1)? 새 : 1; if(k<=0.6) continue;
+        const w=u*0.42*sz, h=u*0.30*sz*2.1;
+        const hx=x+dx*u-w/2, hy=y+dy*u-h*0.75;
+        for(let ry=0;ry<3;ry++) for(let cx2=0;cx2<2;cx2++){
+          if(((i*7+ry*3+cx2)%5)===0) continue;      // 몇 집은 불이 꺼져 있다
+          g.rect(hx+w*(0.20+cx2*0.42), hy+h*(0.16+ry*0.26), w*0.20, h*0.14);
+        }
+      }
+      g.fillStyle='rgba(238,214,150,.62)'; g.fill();
+    }
+    /* 지붕 — 종류별로 한 길에 모아 칠한다 */
+    const 지붕빛={ '초':'rgba(150,128,84,.9)',
+                  '와': 우리? 'rgba(92,88,96,.95)' : 'rgba(82,80,86,.9)',
+                  '벽':'rgba(134,86,68,.92)',
+                  '평':'rgba(126,124,120,.95)' };
+    for(const 꼴 of ['초','와','벽','평']){
+      let 있다=false; g.beginPath();
+      for(let i=0;i<n;i++){
+        const [dx,dy,sz,rr]=L.집[i];
+        if(roofKind(rr,F)!==꼴) continue;
         const k=(i===n-1)? 새 : 1; if(k<=0.02) continue;
         const w=u*0.42*sz, h=u*0.30*sz*k, hx=x+dx*u, hy=y+dy*u;
         있다=true;
-        if(기와){
+        if(꼴==='평'){                                 // 평지붕 — 옥상 난간만
+          const H=h*2.1;
+          g.rect(hx-w*0.56, hy-H*0.80, w*1.12, H*0.10);
+        } else if(꼴==='와'){                          // 기와 — 처마가 휜다
           g.moveTo(hx-w*0.72, hy-h*0.16);
           g.quadraticCurveTo(hx, hy-h*1.25, hx+w*0.72, hy-h*0.16);
           g.lineTo(hx+w*0.55, hy-h*0.02); g.lineTo(hx-w*0.55, hy-h*0.02);
-        } else {
-          g.moveTo(hx-w*0.6, hy-h*0.16); g.lineTo(hx, hy-h*1.0); g.lineTo(hx+w*0.6, hy-h*0.16);
+          g.closePath();
+        } else if(꼴==='벽'){                          // 벽돌 양옥 — 가파른 박공
+          g.moveTo(hx-w*0.58, hy-h*0.16); g.lineTo(hx, hy-h*1.30);
+          g.lineTo(hx+w*0.58, hy-h*0.16); g.closePath();
+        } else {                                      // 초가
+          g.moveTo(hx-w*0.6, hy-h*0.16); g.lineTo(hx, hy-h*1.0);
+          g.lineTo(hx+w*0.6, hy-h*0.16); g.closePath();
         }
-        g.closePath();
       }
       if(!있다) continue;
-      g.fillStyle= 기와? (우리? 'rgba(92,88,96,.95)' : 'rgba(82,80,86,.9)')
-                       : 'rgba(150,128,84,.9)';
-      g.fill();
+      g.fillStyle=지붕빛[꼴]; g.fill();
+    }
+    /* 공장 굴뚝 — 개항 뒤로 저자가 큰 고을에 선다 */
+    if(F.굴뚝 && P.trade>=12){
+      const m=clamp(1+Math.round((P.trade-12)/11), 1, 3);
+      g.beginPath();
+      for(let i=0;i<m;i++){
+        const [dx,dy,sz]=L.집[(i*5+2)%L.집.length];
+        const cw=u*0.13*sz, ch=u*(0.95+i*0.12);
+        g.rect(x+dx*u-cw/2, y+dy*u-ch, cw, ch);
+      }
+      g.fillStyle='rgba(88,78,70,.95)'; g.fill();
     }
   }
   /* ── 도읍의 지붕 ── */
@@ -3674,6 +3750,13 @@ function drawTown(g, P, z){
     }
     g.fillStyle='rgba(70,60,48,.95)'; g.fillRect(-w*0.30, 0, w*0.60, h*0.42);
     g.restore();
+    // 상자의 시대에는 궁 뒤로 높은 건물이 선다
+    if(F.상자){
+      g.fillStyle='rgba(112,110,108,.95)';
+      g.fillRect(x-u*0.16, y-u*2.5, u*0.32, u*1.9);
+      g.fillStyle='rgba(238,214,150,.55)';
+      for(let ry=0;ry<5;ry++) g.fillRect(x-u*0.09, y-u*(2.34-ry*0.34), u*0.18, u*0.13);
+    }
   }
   /* ── 저자 — 장이 크면 깃발이 는다 ── */
   if(아주자세히 && P.trade>0){
@@ -3721,11 +3804,20 @@ function drawTown(g, P, z){
       g.fillStyle='rgba(56,48,38,.9)';
       g.beginPath(); g.moveTo(bx-u*0.26,by); g.quadraticCurveTo(bx,by+u*0.16,bx+u*0.26,by);
       g.closePath(); g.fill();
-      g.strokeStyle='rgba(56,48,38,.85)'; g.lineWidth=Math.max(0.3,0.45/z);
-      g.beginPath(); g.moveTo(bx,by); g.lineTo(bx,by-u*0.34); g.stroke();
-      g.fillStyle='rgba(214,206,182,.8)';
-      g.beginPath(); g.moveTo(bx,by-u*0.34); g.lineTo(bx+u*0.19,by-u*0.10); g.lineTo(bx,by-u*0.06);
-      g.closePath(); g.fill();
+      if(F.기선){
+        // 연통 하나와 연기 — 돛배의 시대가 지났다
+        g.fillStyle='rgba(70,64,58,.92)';
+        g.fillRect(bx-u*0.045, by-u*0.30, u*0.09, u*0.30);
+        const t2=(NOW*0.5+ph)%1;
+        g.fillStyle='rgba(196,190,180,'+((1-t2)*0.34).toFixed(3)+')';
+        g.beginPath(); g.arc(bx+t2*u*0.24, by-u*0.34-t2*u*0.32, u*(0.05+t2*0.07),0,7); g.fill();
+      } else {
+        g.strokeStyle='rgba(56,48,38,.85)'; g.lineWidth=Math.max(0.3,0.45/z);
+        g.beginPath(); g.moveTo(bx,by); g.lineTo(bx,by-u*0.34); g.stroke();
+        g.fillStyle='rgba(214,206,182,.8)';
+        g.beginPath(); g.moveTo(bx,by-u*0.34); g.lineTo(bx+u*0.19,by-u*0.10); g.lineTo(bx,by-u*0.06);
+        g.closePath(); g.fill();
+      }
     }
   }
   /* ── 연기 — 사람이 사는 표 ── */
