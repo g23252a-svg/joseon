@@ -866,8 +866,24 @@ function techPrev(t){
   const arr=TECH_ORDER[t.br], i=arr.indexOf(t.id);
   return i>0? TECHS.find(x=>x.id===arr[i-1]) : null;
 }
+/* 앞선 연구.
+   ----------------------------------------------------------------
+   시대0 마디는 넷, 합 390점이다. 그런데 시대0은 이백 해다. 1450년쯤
+   넷을 다 열고 나면 1592년(거북선), 1637년(시대2)까지 백여 해 동안
+   열 것이 하나도 없었다 — 연구는 해마다 쌓이는데 쓸 곳이 없으니
+   「기술 진흥」이 돈 먹는 헛단추가 되었다.
+
+   이제 바로 다음 시대의 마디는 값을 곱절 가까이 치르고 미리 열 수 있다.
+   장영실이 그랬고 거북선이 그랬다 — 때보다 앞서 이루는 것은 값이 비쌀
+   뿐 없는 일이 아니다. 한 시대 앞은 ×1.8, 두 시대 앞은 ×3.2.
+   세 시대 앞은 닫혀 있다 — 조선 전기에 반도체는 없다. */
+function techAhead(t){ return G.era<t.era; }                 // 아직 때가 아닌 마디인가
+function techCost(t){
+  const 앞=t.era-G.era;
+  return Math.round(t.cost*(앞>=2? 3.2 : 앞===1? 1.8 : 1));  // 앞설수록 가파르게 비싸다
+}
 function techOpen(t){
-  if(G.era<t.era) return false;
+  if(t.era-G.era>=3) return false;                           // 세 시대 앞은 못 본다
   const p=techPrev(t);
   return !p || techDone(p.id);
 }
@@ -2398,7 +2414,7 @@ function aiTurn(B){
         p.army=Math.min(Math.round(garrisonTarget(p)*1.7), p.army+ri(60,240)); }
       if(Math.random()<0.30) p.farm =Math.min(devCap(), p.farm +1);
       if(Math.random()<0.24) p.trade=Math.min(devCap(), p.trade+1);
-      if(Math.random()<0.06 && p.fort<4+Math.floor(G.era*0.9)) p.fort++;
+      if(Math.random()<0.06 && p.fort<4+Math.floor(G.era*0.9)) p.fort++;   // 이웃은 예전 상한대로
     });
     /* 약한 이웃을 문다. 조선도 예외가 아니다 — 종전에는 코드가 조선을 빼 놨다.
        다만 이제는 주사위가 아니라 사이를 본다. 형제와는 싸우지 않는다. */
@@ -2595,7 +2611,18 @@ function checkEnd(){
 /* 명령마다 정무를 쓴다. 한 해에 쓸 수 있는 손은 정해져 있다.
    비용도 이미 올린 만큼 비싸진다 — 초반엔 싸고 후반엔 버겁게. */
 function devStep(){ return 3+G.era; }                 // 시대가 오르면 한 삽의 크기도 커진다
-function devCap(){ return 40+G.era*10; }
+/* 개발 상한.
+   시대에만 매어 두면 시대0(이백 해)에서 1530년쯤 온 고을이 다 차고
+   남은 육십 해 동안 개간·장시가 전부 회색이 된다. 이제 기술 마디를
+   열 때마다 상한이 2씩 올라간다 — 이앙법을 이루면 넓힐 논이 생기는
+   것이 순서다. 앞선 연구와 맞물려, 부지런한 판일수록 지을 것이 남는다. */
+function devCap(){ return 40 + G.era*10 + Object.keys((G.res&&G.res.done)||{}).length*2; }
+/* 성곽 상한 — 무예 갈래의 마디가 성 쌓는 법도 함께 밀어 올린다 */
+function fortCap(){
+  let c=4+Math.floor(G.era*0.9);
+  ['hwacha','geobuk','hongi','sinsik','jaju'].forEach(id=>{ if(techDone(id)) c++; });
+  return c;
+}
 const ACTIONS=[
   { id:'gaegan', nm:'개간', cost:80, adm:1, need:p=>p.nat==='kor'&&p.farm<devCap(),
     desc:p=>'농지 '+p.farm+' → '+Math.min(devCap(),p.farm+devStep())+'.  개발 +1. 인구가 더 늘 수 있게 된다.',
@@ -2609,7 +2636,7 @@ const ACTIONS=[
     run:p=>{ p.trade=Math.min(devCap(),p.trade+devStep()); p.dev=Math.min(devCap(),p.dev+1);
       townBuilt(p,'market'); fxDust(p.id,'#e0bd76',6); sagaDo('sijang');
       log(p.nm+'에 장을 열었다.'); snd('market'); fxPop(p.id,'장시','#e0bd76'); } },
-  { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<4+Math.floor(G.era*0.9),
+  { id:'chuk', nm:'축성', cost:140, adm:2, need:p=>p.nat==='kor'&&p.fort<fortCap(),
     desc:p=>'성곽 '+p.fort+' → '+(p.fort+1)+'. 방어 +16%, 해마다 유지가 는다.',
     run:p=>{ p.fort++; p.dev=Math.min(devCap(),p.dev+1); G.plateDirty=true;
       townBuilt(p,'wall'); fxDust(p.id,'#cfc7b6',10); sagaDo('chuk');
@@ -2800,8 +2827,44 @@ function canGo(A, id){
   const P=G.provs[A.at]; if(!P) return false;
   return P.adj.has(id);
 }
+/* 길찾기 — 먼 고을을 눌러도 간다.
+   ----------------------------------------------------------------
+   여태는 맞닿은 고을만 눌 수 있었다. 세 칸 밖의 성을 치려면 해마다
+   깃발을 다시 골라 다음 칸을 눌러 주어야 했다 — 명령이 아니라 시중이다.
+   이제 어느 고을을 눌러도 가장 가까운 길을 스스로 찾아 해마다 한 걸음씩
+   간다. 명령은 한 번이면 된다.
+   길은 이렇게 고른다: 우리 땅과 목적지는 그냥 밟고, 남의 땅을 거쳐야
+   하면 그만큼 비싸게 센다(싸움을 부르는 길이므로 돌아갈 수 있으면 돈다). */
+function findPath(A, 끝){
+  if(A.at===끝) return null;
+  const 값={ [A.at]:0 }, 앞={}, 줄=[A.at];
+  while(줄.length){
+    let bi=0; for(let i=1;i<줄.length;i++) if(값[줄[i]]<값[줄[bi]]) bi=i;
+    const 지금=줄.splice(bi,1)[0];
+    if(지금===끝) break;
+    const P=G.provs[지금]; if(!P) continue;
+    [...P.adj].forEach(id=>{
+      const q=G.provs[id]; if(!q) return;
+      // 남의 땅을 거치는 값 — 목적지는 제값, 지나는 길이면 비싸게
+      const 무게 = 1 + (id!==끝 && q.nat!==A.nat? 2.5 : 0)
+                     + (SEA_LINK[지금+'|'+id]||q.t==='mtn'? 1 : 0);
+      const v=값[지금]+무게;
+      if(값[id]===undefined || v<값[id]){ 값[id]=v; 앞[id]=지금; if(!줄.includes(id)) 줄.push(id); }
+    });
+  }
+  if(앞[끝]===undefined) return null;
+  const 길=[]; let c=끝;
+  while(c!==A.at){ 길.unshift(c); c=앞[c]; }
+  return 길;
+}
 function orderMove(A, id){
-  if(!canGo(A,id)) return false;
+  if(canGo(A,id)){ A.path=null; }
+  else {
+    const 길=findPath(A, id);
+    if(!길 || !길.length) return false;
+    A.path=길.slice(1);              // 첫 걸음은 dest 로, 나머지는 주머니에
+    id=길[0];
+  }
   A.dest=id; A.mv=0;
   const 느림 = SEA_LINK[A.at+'|'+id] || (G.provs[id] && G.provs[id].t==='mtn');
   A.need = 느림? 2 : 1;
@@ -2945,6 +3008,15 @@ function armyTurn(B){
       const P=G.provs[A.at];
       if(P && DIP_NATS.includes(P.nat)) declareWar(P.nat, true);
     }
+    /* 주머니에 남은 길이 있으면 다음 걸음을 꺼낸다 — 명령은 한 번이면 된다.
+       닿은 자리가 남의 땅이면 멈춘다: 싸움이 시작되는 자리다. */
+    const 여기=G.provs[A.at];
+    if(A.path && A.path.length && 여기 && 여기.nat===A.nat){
+      const 다음=A.path[0];
+      if(G.provs[다음]){ A.path=A.path.slice(1); A.dest=다음; A.mv=0;
+        A.need=(SEA_LINK[A.at+'|'+다음]||G.provs[다음].t==='mtn')? 2:1; }
+      else A.path=null;
+    } else if(A.path && (!여기 || 여기.nat!==A.nat)) A.path=null;
   });
   // 닿은 자리에서 같은 편끼리 한 덩어리가 된다 — 깃발이 포개지지 않게
   mergeArmies();
@@ -3172,14 +3244,18 @@ function exportGuess(add){
    ================================================================ */
 function unlockTech(t){
   if(techDone(t.id)){ log('이미 열린 마디요.'); return; }
-  if(G.era<t.era){ log('아직 이를 다룰 때가 아니오.'); return; }
+  if(t.era-G.era>=3){ log('아직 이를 다룰 때가 아니오.'); return; }
   const prev=techPrev(t);
   if(prev && !techDone(prev.id)){ log(prev.nm+을를(prev.nm)+' 먼저 이루어야 하오.'); return; }
-  if(G.res.pt < t.cost){ log('연구가 모자라오.'); return; }
-  G.res.pt = +(G.res.pt - t.cost).toFixed(2);
+  const 값=techCost(t);
+  if(G.res.pt < 값){ log('연구가 모자라오.'); return; }
+  const 앞섬=techAhead(t);
+  G.res.pt = +(G.res.pt - 값).toFixed(2);
   G.res.done[t.id]=G.year;
   G.nations.kor.tech = +(G.nations.kor.tech + 4 + G.era*1.5).toFixed(1);
-  log('「'+t.nm+'」'+을를(t.nm)+' 이루었다.'); snd('tech');
+  log(앞섬? ('때보다 앞서 「'+t.nm+'」'+을를(t.nm)+' 이루었다.')
+          : ('「'+t.nm+'」'+을를(t.nm)+' 이루었다.'));
+  snd('tech');
 }
 
 /* ================================================================
@@ -3261,7 +3337,7 @@ function advice(){
     '정무는 해를 넘기면 사라진다. 개간·장시·축성 가운데 하나라도 쓰는 편이 낫다.', null);
 
   /* 연구 */
-  const 열수있는=TECHS.filter(t=>!techDone(t.id) && techOpen(t) && G.res.pt>=t.cost);
+  const 열수있는=TECHS.filter(t=>!techDone(t.id) && techOpen(t) && G.res.pt>=techCost(t));
   if(열수있는.length) 더(74,
     '기술 마디 '+열수있는.length+'개를 열 수 있다',
     '연구가 쌓여 있다. 「'+열수있는[0].nm+'」부터 열 수 있다.',
@@ -4996,7 +5072,10 @@ function drawArmyBar(g){
                 : '  ·  이 군으로는 못 민다');
     빛= 걸음>0? '#8fd6a0' : '#c4534a';
   } else if(A.dest && G.provs[A.dest]){
-    상태='→ '+G.provs[A.dest].nm+'  '+((A.need||1)-A.mv)+'해'; 빛='rgba(150,145,135,.85)';
+    const 끝 = (A.path&&A.path.length)? G.provs[A.path[A.path.length-1]] : null;
+    상태= 끝? ('→ '+끝.nm+'  '+((A.path.length+1))+'걸음 남음')
+            : ('→ '+G.provs[A.dest].nm+'  '+((A.need||1)-A.mv)+'해');
+    빛='rgba(150,145,135,.85)';
   } else if(P && P.nat!=='kor'){
     const 무=siegeParty(A);                       // 이 성을 함께 미는 우리 편 모두
     const 걸음=siegeStep(무,P);
@@ -5038,7 +5117,7 @@ function drawArmyBar(g){
   const 가는중 = !!A.dest;
   const by=y+4, bh=h-8;
   btn(g, x+w-bw*2-10, by, bw-4, bh, 가는중? '행군 취소':'선택 해제', false, ()=>{
-    if(가는중){ A.dest=null; A.mv=0; log('군에 그 자리에 머물라 일렀다.'); }
+    if(가는중){ A.dest=null; A.path=null; A.mv=0; log('군에 그 자리에 머물라 일렀다.'); }
     else G.armySel=null;
   });
   const 제땅 = P && P.nat==='kor';
@@ -5317,10 +5396,10 @@ function drawMap(g){
     /* 군을 고른 채로 맞닿은 고을을 누르면 그리로 보낸다 —
        고르고 나서 또 어디를 눌러야 하는지 묻지 않는다. */
     const A=armySel();
-    if(A && A.at!==id && canGo(A,id)){
-      orderMove(A,id);
+    if(A && A.at!==id && orderMove(A,id)){
       const q=G.provs[id];
-      log(natName('kor')+'의 군에 '+q.nm+(A.need>1? ' 쪽으로 두 해' : ' 쪽으로')+' 가라 일렀다.');
+      const 몇해=(A.path? A.path.length:0)+1;
+      log(natName('kor')+'의 군에 '+q.nm+(몇해>1? ' 쪽으로 — '+몇해+'걸음 길이다.' : ' 쪽으로 가라 일렀다.'));
       snd('click'); G.sel=id; return;
     }
     G.sel=id;
@@ -5787,23 +5866,25 @@ function sideTech(g,x,y,w){
         g.fillStyle='rgba(130,125,115,.75)'; g.font='10px serif'; g.textAlign='right';
         g.fillText(G.res.done[t.id]+'년', x+w, yy+16); g.textAlign='left';
       } else if(open){
-        const 살수=R.pt>=t.cost && !G.ended;
+        const 값=techCost(t), 앞섬=techAhead(t);
+        const 살수=R.pt>=값 && !G.ended;
         const hov=inRect(Mouse,{x:x-4,y:yy,w:w+8,h:rowH-2});
         if(hov&&살수){ g.fillStyle='rgba(190,150,80,.14)'; g.fillRect(x-4,yy,w+8,rowH-2); }
         g.fillStyle= 살수? '#e8e1d1' : '#8b8377'; g.font='12px serif';
-        g.fillText('○ '+t.nm, x+2, yy+15);
+        g.fillText('○ '+t.nm+(앞섬? '  (앞선 연구)':''), x+2, yy+15);
         g.fillStyle= 살수? '#b79fe0' : 'rgba(120,115,105,.8)'; g.font='11px serif';
-        g.textAlign='right'; g.fillText('연구 '+t.cost, x+w, yy+15); g.textAlign='left';
+        g.textAlign='right'; g.fillText('연구 '+값, x+w, yy+15); g.textAlign='left';
         g.fillStyle='rgba(143,168,106,.9)'; g.font='10px serif';
         g.fillText('＋ '+t.good, x+12, yy+30);
         if(살수) hz(x-4,yy,w+8,rowH-2, ()=>{ unlockTech(t); });
-        if(hov) G.tip = 살수? ('「'+t.nm+'」 — 연구 '+t.cost+'을 들여 연다.')
-                            : ('연구가 '+Math.ceil(t.cost-R.pt)+' 모자란다. 해마다 +'+researchGain().toFixed(1)
-                               +' 이니 '+Math.ceil((t.cost-R.pt)/Math.max(0.1,researchGain()))+'해쯤 걸린다.');
+        if(hov) G.tip = 살수? ('「'+t.nm+'」 — 연구 '+값+'을 들여 연다.'
+                               +(앞섬? '  때('+ERAS[t.era].nm+')보다 앞서 여는 값이다.':''))
+                            : ('연구가 '+Math.ceil(값-R.pt)+' 모자란다. 해마다 +'+researchGain().toFixed(1)
+                               +' 이니 '+Math.ceil((값-R.pt)/Math.max(0.1,researchGain()))+'해쯤 걸린다.');
       } else {
         g.fillStyle='rgba(70,66,60,.75)'; g.font='11px serif';
         const prev=techPrev(t);
-        const why = G.era<t.era? (ERAS[t.era].nm+' 이후') : (prev? prev.nm+' 다음' : '');
+        const why = t.era-G.era>=3? (ERAS[t.era-2].nm+' 이후') : (prev? prev.nm+' 다음' : '');
         g.fillText('· '+t.nm+'  — '+why, x+2, yy+15);
       }
       yy+=rowH;
@@ -6448,7 +6529,7 @@ const HELP=[
    ['h','나라 살림'],
    ['d','국고','명령과 조약의 값을 치른다. 비면 신하의 충성이 떨어진다.'],
    ['d','식량','군사와 백성이 먹는다. 모자라면 굶고 군대가 흩어지고 온 고을이 시끄러워진다.'],
-   ['d','기술','연구가 쌓이면 기술 마디를 연다. 싸움과 살림에 두루 듣는다.'],
+   ['d','기술','연구가 쌓이면 기술 마디를 연다. 싸움과 살림에 두루 듣고, 마디를 열 때마다 온 고을의 개발 상한이 오른다. 바로 다음 시대의 마디는 값을 곱절 가까이 치르고 앞서 열 수도 있다.'],
    ['d','정책','세 자리까지 편다. 얻는 것이 있으면 잃는 것도 있다.'] ],
 
  [ ['h','이웃'],
