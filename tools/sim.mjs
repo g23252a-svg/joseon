@@ -216,6 +216,11 @@ function uiCheck(){
   [0,1,2,3].forEach(i => shot('실록 · ' + api.get('SAGA_TABS')[i], () => {
     api.ev("SCENE='play'; MENU={tab:'saga'}; SAGAPG=" + i + "; SAGASC=0;");
   }));
+  /* 일러두기 — 네 쪽 모두, 그리고 제목 화면에서도 */
+  [0,1,2,3].forEach(i => shot('일러두기 · ' + api.get('HELP_TABS')[i], () => {
+    api.ev("SCENE='play'; MENU={tab:'help'}; HELPPG=" + i + "; HELPSC=0;");
+  }));
+  shot('제목 · 일러두기', () => api.ev("SCENE='title'; MENU={tab:'help', from:'title'}; HELPPG=0;"));
   shot('놀이 · 민심 보기', () => { api.ev("MENU=null;"); G.view = 'unrest'; });
   shot('놀이 · 정치 지도', () => { G.mapMode = 'political'; G.view = 'nat'; });
   shot('놀이 · 동아시아 전체', () => api.call('setMapPreset', 'all'));
@@ -249,7 +254,10 @@ function uiCheck(){
   shot('싸움 효과가 떠 있는 지도', () => {
     api.ev("SCENE='play'; MENU=null;");
     G.popup = null; G.report = null;
-    api.call('fxBattle', G.provs['pyab'], G.provs['liao'], true, 1200, 3400);
+    /* 군대 층이 들어온 뒤로 싸움은 야전과 포위 두 가지다 */
+    api.ev("G.armies=[{id:91,nat:'kor',at:'liao',dest:null,men:12000,siege:57,mv:0,born:1392},"
+         + "{id:92,nat:'chn',at:'pyan',dest:null,men:9000,siege:23,mv:0,born:1392},"
+         + "{id:93,nat:'kor',at:'pyab',dest:'liao',men:6000,siege:0,mv:0,need:1,born:1392}]; G.armySel=91;");
     api.call('fxFlip', G.provs['jeon'], 'chn', '전라도 반란', '#c4534a');
     api.call('fxPop', 'hans', '개간', '#8fbf6a');
     api.call('fxTick', 0.3);
