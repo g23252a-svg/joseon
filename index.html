@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -366,6 +366,151 @@ const ERAS=[
   { y:1988, nm:'현대', desc:'세계로 나간다.', tech:8 }
 ];
 function eraOf(y){ let e=0; ERAS.forEach((E,i)=>{ if(y>=E.y) e=i; }); return e; }
+
+/* ================================================================
+   임금과 치세
+   ----------------------------------------------------------------
+   여태 이 판에는 사람이 없었다. 다스리는 것은 '조정'이라는 이름 없는
+   무엇이었고, 육백 년이 한 덩어리로 흘렀다. 마디라고는 시대 여덟 개뿐이라
+   1392년의 한 해와 1700년의 한 해가 똑같이 생겼다.
+
+   임금을 세운다. 실제로 앉았던 스물일곱을 그 해에 그대로 앉히고,
+   저마다 잘하는 것과 못하는 것을 준다. 즉위할 때마다 교서를 내려
+   그 치세의 결을 정하고, 승하하면 사관이 그 치세를 적는다.
+
+   그러면 판이 스물일곱 장(章)으로 나뉜다. 열댓 해마다 사람이 바뀌고,
+   바뀔 때마다 고를 것이 생기고, 끝날 때마다 남는 글이 생긴다.
+   ================================================================ */
+/* 재주 — mods()에 그대로 얹힌다. 없는 것은 1이거나 0이다.
+     학문 연구 몫 · 무 공격 · 지킴 수비 · 다스림 민심 흐름
+     그릇 정통 흐름 · 붕당 당쟁 열기 · 재정 국고 몫 */
+const KINGS=[
+ {y:1392,나:'태조',결:'창업',재:{무:1.14,그릇:0.6,붕당:0.4},
+  말:'위화도에서 군대를 돌린 사람. 칼로 연 나라를 붓으로 세우려 한다.'},
+ {y:1398,나:'정종',결:'과도',재:{다스림:0.3,붕당:0.3},
+  말:'형제의 다툼 끝에 앉았다. 오래 있을 뜻이 없다.'},
+ {y:1400,나:'태종',결:'다지기',재:{무:1.12,그릇:0.9,다스림:-0.5,붕당:-0.4,재정:1.08},
+  말:'사병을 거두고 호패를 돌렸다. 미움을 두려워하지 않는다.'},
+ {y:1418,나:'세종',결:'성세',재:{학문:1.45,다스림:0.7,그릇:0.7,재정:1.05},
+  말:'집현전의 불이 꺼지지 않는다. 백성이 쓸 글자를 만들고 있다.'},
+ {y:1450,나:'문종',결:'짧은 봄',재:{학문:1.15,다스림:0.3},
+  말:'삼십 년을 세자로 지냈다. 몸이 약하다.'},
+ {y:1452,나:'단종',결:'어린 임금',재:{그릇:-0.8,붕당:0.9,다스림:-0.3},
+  말:'열두 살이다. 수렴도 섭정도 없이 신하들 사이에 앉아 있다.'},
+ {y:1455,나:'세조',결:'찬탈',재:{무:1.16,그릇:-0.9,다스림:0.4,재정:1.06},
+  말:'조카의 자리를 빼앗았다. 다스림은 매섭고 명분은 얕다.'},
+ {y:1468,나:'예종',결:'짧은 해',재:{붕당:0.4},
+  말:'열넷 달을 앉았다. 공신들이 조정을 쥐고 있다.'},
+ {y:1469,나:'성종',결:'경국대전',재:{학문:1.25,다스림:0.6,그릇:0.6,붕당:0.5},
+  말:'법전을 마무리한다. 사림을 불러들여 훈구와 맞세운다.'},
+ {y:1494,나:'연산군',결:'폭정',재:{다스림:-1.6,그릇:-1.2,재정:0.82,붕당:1.2},
+  말:'사초를 문제 삼아 선비를 베었다. 곳간이 잔치로 빈다.'},
+ {y:1506,나:'중종',결:'반정',재:{다스림:0.3,그릇:-0.4,붕당:0.8},
+  말:'신하들이 세운 임금이다. 세운 사람들이 곧 조정이다.'},
+ {y:1544,나:'인종',결:'여덟 달',재:{다스림:0.5,학문:1.1},
+  말:'어질다는 말을 들었으나 여덟 달을 못 넘겼다.'},
+ {y:1545,나:'명종',결:'외척',재:{붕당:1.1,다스림:-0.5,재정:0.92},
+  말:'어머니가 발을 드리우고 앉았다. 외척이 자리를 나눈다.'},
+ {y:1567,나:'선조',결:'붕당과 왜란',재:{붕당:1.3,무:0.90,그릇:-0.5},
+  말:'동인과 서인이 갈렸다. 남쪽에서 무슨 소리가 들린다.'},
+ {y:1608,나:'광해군',결:'실리',재:{재정:1.12,그릇:-0.7,붕당:0.7,학문:1.1},
+  말:'명과 후금 사이에서 저울질한다. 대동법을 편다.'},
+ {y:1623,나:'인조',결:'호란',재:{무:0.88,그릇:-0.8,다스림:-0.6},
+  말:'반정으로 앉았다. 북쪽에 새 나라가 서고 있다.'},
+ {y:1649,나:'효종',결:'북벌',재:{무:1.18,재정:0.90,그릇:0.5},
+  말:'심양에서 여덟 해를 볼모로 지냈다. 군사를 기른다.'},
+ {y:1659,나:'현종',결:'예송',재:{붕당:1.2,학문:1.1,다스림:-0.3},
+  말:'상복을 몇 해 입느냐로 조정이 두 쪽 났다.'},
+ {y:1674,나:'숙종',결:'환국',재:{붕당:1.4,무:1.08,재정:1.08,다스림:-0.4},
+  말:'조정을 통째로 갈아치우기를 세 번 했다. 무섭고 셈이 빠르다.'},
+ {y:1720,나:'경종',결:'신임사화',재:{붕당:1.3,다스림:-0.4},
+  말:'병약하다. 왕세제를 두고 조정이 죽기 살기로 다툰다.'},
+ {y:1724,나:'영조',결:'탕평',재:{붕당:-1.0,다스림:0.9,재정:1.10,학문:1.15},
+  말:'탕평비를 세웠다. 오십이 년을 앉아 붕당을 눌러 간다.'},
+ {y:1776,나:'정조',결:'문예부흥',재:{학문:1.40,다스림:0.7,붕당:-0.6,그릇:0.6},
+  말:'규장각을 열고 서얼을 들였다. 화성을 쌓는다.'},
+ {y:1800,나:'순조',결:'세도',재:{재정:0.86,다스림:-0.9,붕당:0.9,그릇:-0.6},
+  말:'열한 살에 앉았다. 한 집안이 나라를 나누어 가진다.'},
+ {y:1834,나:'헌종',결:'세도',재:{재정:0.88,다스림:-0.7,그릇:-0.7},
+  말:'여덟 살이다. 삼정이 무너지고 있다.'},
+ {y:1849,나:'철종',결:'강화도령',재:{그릇:-1.1,다스림:-0.8,학문:0.85,재정:0.88},
+  말:'강화에서 농사짓다 불려 왔다. 글을 배우지 못했다.'},
+ {y:1863,나:'고종',결:'개항과 대한제국',재:{학문:1.15,그릇:-0.5,재정:0.92},
+  말:'열둘에 앉았다. 문을 열 것인가 닫을 것인가로 조정이 갈린다.'},
+ {y:1907,나:'순종',결:'마지막',재:{그릇:-1.0,다스림:-0.5},
+  말:'이미 정할 수 있는 것이 남아 있지 않다.'}
+];
+/* 1910년 뒤에는 임금이 없다. 그래도 판의 마디는 있어야 한다 —
+   열두어 해마다 바뀌는 '대(代)'로 잇는다. 실존 인물은 쓰지 않는다. */
+const 대이름=['임시','건국','재건','개발','전환','민주','세계','새'];
+function kingAt(y){
+  let i=-1; KINGS.forEach((K,j)=>{ if(y>=K.y) i=j; });
+  return i;
+}
+function kingNow(){
+  if(!G) return null;
+  if(G.king!=null && G.king>=0 && G.king<KINGS.length) return KINGS[G.king];
+  return G.gen || null;                       // 임금 없는 때의 '대'
+}
+function kingName(){
+  const K=kingNow(); if(!K) return '조정';
+  return K.나 || K.nm;
+}
+function kingTrait(k, def){
+  const K=kingNow(); if(!K||!K.재) return def;
+  return K.재[k]!=null? K.재[k] : def;
+}
+/* 임금 없는 때의 '대' 하나를 짓는다 */
+function mkGen(n){
+  const 결=['다지기','재건','성장','전환','안정'];
+  return { 나:(대이름[Math.min(대이름.length-1,n)]||('제'+(n+1)))+' '+(n+1)+'대',
+           결:pick(결), y:G.year, 햇수:ri(10,15),
+           재:{ 학문:1+(ri(0,30)-10)/100, 다스림:(ri(0,14)-6)/10,
+                재정:1+(ri(0,24)-10)/100, 붕당:(ri(0,12)-6)/10 },
+           말:'임금이 없는 때다. 조정은 사람이 아니라 자리로 이어진다.' };
+}
+
+/* ================================================================
+   다가오는 일
+   ----------------------------------------------------------------
+   이 판에서 큰일은 늘 갑자기 왔다. 1592년에 화면이 하나 뜨고, 그제야
+   남해안에 성이 없다는 것을 알게 된다. 그때는 이미 늦었다.
+
+   못박힌 큰일 다섯에는 그림자를 미리 드리운다. 십수 해 전부터
+   "무엇이 오는지"와 "무엇을 해 두어야 하는지"를 적어 둔다.
+   그러면 그 십수 해가 각각 다른 해가 된다 — 준비하는 해다.
+   ================================================================ */
+const OMENS=[
+ { y:1592, 나:'왜란', 알:18,
+   말:'바다 건너에서 군사를 모은다는 말이 사신 편에 돈다.',
+   채비:'남해안 고을의 성과 병력을 손봐 두어라. 일본과의 사이도 값이 된다.',
+   본다:()=>['gyen','jeon','gyeb','jeju'] },
+ { y:1636, 나:'북쪽의 새 나라', 알:14,
+   말:'북쪽에서 일어난 나라가 형제의 예를 요구한다. 조정은 갈라져 있다.',
+   채비:'서북의 성을 쌓고, 명과의 사이를 어디까지 지킬지 정해 두어라.',
+   본다:()=>['pyab','pyan','hamb'] },
+ { y:1876, 나:'열리는 문', 알:12,
+   말:'이양선이 자주 뜬다. 문을 열라는 글이 거듭 온다.',
+   채비:'기술 마디를 열어 두지 않으면 문이 열릴 때 빈손으로 맞는다.',
+   본다:()=>[] },
+ { y:1910, 나:'국권', 알:12,
+   말:'조약의 글자들이 하나씩 나라의 손을 묶는다.',
+   채비:'정통과 군사가 얕으면 막을 수 없다. 지금 쌓아 두어라.',
+   본다:()=>[] },
+ { y:1950, 나:'전란', 알:6,
+   말:'갈라진 두 쪽이 서로를 겨눈다.',
+   채비:'곳간과 군사를 채워 두어라.',
+   본다:()=>[] }
+];
+/* 지금 그림자가 드리운 일 — 가장 가까운 것 하나 */
+function omenNow(){
+  if(!G) return null;
+  for(const O of OMENS){
+    const 남=O.y-G.year;
+    if(남>0 && 남<=O.알) return { O, 남 };
+  }
+  return null;
+}
 
 /* 세력 */
 const NATIONS={
@@ -850,7 +995,7 @@ function ensureProvinceOptions(){
   provinceOptionsReady=true;
 }
 function syncProvinceTool(){
-  const show=SCENE==='play' && !MENU && !G.popup && !G.report;
+  const show=SCENE==='play' && !MENU && !G.popup && !G.report && !G.pendingReign;
   provinceTool.hidden=!show;
   if(!show) return;
   ensureProvinceOptions();
@@ -873,7 +1018,8 @@ function newGame(){
       grid:[], provs:{}, nations:{}, officials:[], pool:[],
       factions:{}, policies:[], polSince:{}, popup:null, ver:VERSION,
       evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
-      res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0 };
+      res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0,
+      king:null, gen:null, genN:0, edict:null, reign:null, reigns:[], pendingReign:null };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -980,6 +1126,13 @@ function newGame(){
   /* 신하 — 고을 수만큼은 있어야 자리를 채울 수 있다 */
   for(let i=0;i<12;i++) G.officials.push(mkOfficial());
   for(let i=0;i<6;i++) G.pool.push(mkOfficial());
+
+  /* 첫 임금 — 태조가 앉고, 첫 교서를 고르는 것으로 판이 열린다 */
+  G.king=kingAt(1392);
+  G.reign={ y0:G.year, prov0:natProvs('kor').length, node0:0, legit0:Math.round(G.legit),
+            pop0:G.nations.kor.pop, stab:0, 해:0, 전쟁:0, 사화:0, 뺏김:0, 얻음:0 };
+  const K0=KINGS[G.king];
+  G.popup={ kind:'accede', y:G.year, king:K0, picks:edictChoices(K0) };
 
   log('임진년보다 이백 년 앞선 해. 나라를 맡는다.');
   log('연도를 넘기려면 「한 해를 보낸다」.');
@@ -1146,13 +1299,88 @@ function mods(){
   });
   /* 쇄국은 조약의 이로움을 스스로 닫는다 */
   if(has('swaeguk')) m.exp*=0.35;
+
+  /* ── 임금의 재주 ──
+     같은 판을 같은 손으로 두어도 세종 밑에서와 연산군 밑에서가 달라야 한다.
+     그래야 치세가 바뀌는 것이 소식이 된다. */
+  /* 재주는 결을 주는 것이지 판을 대신 두어 주는 것이 아니다.
+     처음에 그대로 얹었더니 아무것도 하지 않는 판이 육백 년을 버텼다 —
+     임금이 잘나서 나라가 굴러가면 두는 사람이 할 일이 없다. 절반으로 눌렀다. */
+  /* 학문은 '연구'를 밀 뿐, 기술을 찍어 내지 않는다.
+     처음에는 해마다 기술을 바로 얹었더니, 아무것도 하지 않는 판이
+     육백 년 만에 기술 1467에 이르렀다. 기술은 수비에 그대로 곱해지므로
+     (1+기술/220) 가만있는 나라가 일곱 배로 단단해져 아무도 못 이겼다.
+     마디는 사람이 열어야 열린다. */
+  m.res  *= kingTrait('학문',1);
+  m.atk  *= kingTrait('무',1);
+  m.def  *= kingTrait('지킴',1);
+  m.goldMul *= kingTrait('재정',1);
+  m.stab += kingTrait('다스림',0)*0.5;
+  m.legit+= kingTrait('그릇',0)*0.5;
+  m.facHeat += kingTrait('붕당',0);
+
+  /* ── 즉위 교서 —— 치세 내내 간다 ── */
+  const E2=EDICTS.find(e=>e.id===G.edict);
+  if(E2 && E2.mod) E2.mod(m);
+
   /* 방어는 우리 땅에서만 든다 */
   m.defKor*=m.def;
   return m;
 }
+/* 즉위 교서 — 새 임금이 처음 내리는 글. 그 치세가 끝날 때까지 간다.
+   판 하나에 스물일곱 번 고르게 되니, 이것이 이 놀이에서 가장 자주 하는 선택이다. */
+const EDICTS=[
+ { id:'inj', nm:'어진 정치를 편다',
+   설:'나라의 민심이 절로 오른다. 대신 세가 덜 걷히고 연구가 더디다.',
+   짧:'민심 ↑  ·  국고 −8%  ·  연구 −15%',
+   mod:m=>{ m.stab+=0.45; m.goldMul*=0.92; m.res*=0.85; } },
+ { id:'mu', nm:'군을 기른다',
+   설:'수비병이 빨리 차고 지키는 힘이 는다. 곳간이 그만큼 빈다.',
+   짧:'수비 ↑  ·  국고 −10%  ·  곡식 −6%',
+   mod:m=>{ m.armyReg*=1.4; m.def*=1.08; m.goldMul*=0.90; m.food*=0.94; } },
+ { id:'hak', nm:'학문을 일으킨다',
+   설:'연구가 크게 는다. 당장의 살림에는 보탬이 없다.',
+   짧:'연구 +35%  ·  민심 −0.3',
+   mod:m=>{ m.res*=1.35; m.stab-=0.3; } },
+ { id:'jae', nm:'곳간을 채운다',
+   설:'세를 더 걷는다. 백성은 그만큼 시끄러워진다.',
+   짧:'국고 +14%  ·  민심 −0.6',
+   mod:m=>{ m.goldMul*=1.14; m.trade*=1.06; m.stab-=0.6; } },
+ { id:'tang', nm:'붕당을 누른다',
+   설:'당쟁의 열기를 식힌다. 눌린 쪽의 신하가 마음을 접는다.',
+   짧:'붕당 열기 ↓  ·  신하 충성 −1',
+   mod:m=>{ m.facHeat-=0.9; m.loy-=1.0; } },
+ { id:'nong', nm:'농사를 살핀다',
+   설:'곡식이 늘고 사람이 는다. 장사에는 마음을 쓰지 않는다.',
+   짧:'곡식 +12%  ·  인구 ↑  ·  장사 −8%',
+   mod:m=>{ m.food*=1.12; m.pop*=1.06; m.trade*=0.92; } },
+ { id:'gyo', nm:'이웃과 사귄다',
+   설:'큰 나라가 쉬이 군사를 내지 않고, 수출이 는다. 명분은 조금 접는다.',
+   짧:'침공 위험 ↓  ·  수출 +25%  ·  정통 −0.3',
+   mod:m=>{ m.invRisk*=0.72; m.exp*=1.25; m.legit-=0.3; } }
+];
+function edictNow(){ return EDICTS.find(e=>e.id===G.edict) || null; }
+/* 임금의 결에 맞는 세 가지를 고른다 — 세종에게 '군을 기른다'만 내밀지 않는다 */
+function edictChoices(K){
+  const 재=(K&&K.재)||{};
+  const 점=e=>{
+    let s=0;
+    if(e.id==='hak') s+=((재.학문||1)-1)*10;
+    if(e.id==='mu')  s+=((재.무||1)-1)*10;
+    if(e.id==='jae') s+=((재.재정||1)-1)*10;
+    if(e.id==='inj') s+=(재.다스림||0);
+    if(e.id==='tang')s+=-(재.붕당||0);
+    if(e.id==='gyo') s+=(재.그릇||0)*0.5;
+    return s;
+  };
+  const 줄=EDICTS.slice().sort((a,b)=>점(b)-점(a));
+  // 결에 맞는 둘 + 그 밖에서 하나 — 늘 같은 셋이 나오지 않게
+  const 앞=줄.slice(0,2), 남=줄.slice(2);
+  return 앞.concat([pick(남)]);
+}
 
 function endTurn(){
-  if(G.ended || G.popup || G.report) return;
+  if(G.ended || G.popup || G.report || G.pendingReign) return;
   const N=G.nations.kor;
   const B={ gold0:N.gold, food0:N.food, pop0:N.pop, stab0:N.stab, legit0:G.legit,
             trade:0, farm:0, upkeepArmy:0, upkeepPay:0, upkeepFort:0,
@@ -1395,6 +1623,7 @@ function endTurn(){
       log('사화가 일어났다. '+win+이가(win)+' 조정을 잡고 '+v.nm+이가(v.nm)+' 쫓겨났다. '
           +G.provs[seat].nm+은는(G.provs[seat].nm)+' '+heir.nm+이가(heir.nm)+' 맡는다.');
       B.events.push('사화');
+      if(G.reign) G.reign.사화++;
       N.stab=clamp(N.stab-8,0,100);
     }
   }
@@ -1408,6 +1637,7 @@ function endTurn(){
     G.factions={}; nf.forEach(f=>G.factions[f]=100/nf.length);
     G.officials.forEach(o=>o.fac=pick(nf));
     G.popup={ kind:'era', title:E.nm, body:E.desc, y:G.year };
+    if(G.reign) G.reign.시대=E.nm;
     log('── '+E.nm+' ──  '+E.desc);
     snd('era'); MUS.next=0;                      // 시대가 바뀌면 가락도 바뀐다
     B.events.push(E.nm);
@@ -1424,6 +1654,9 @@ function endTurn(){
     }
   }
 
+  /* 치세의 장부 — 이 임금이 맡은 동안의 몫만 센다 */
+  if(G.reign){ G.reign.해++; G.reign.stab += N.stab; }
+  reignTurn(B);
   dipTurn(B);
   cjTurn(B);
   aiTurn(B);
@@ -1494,7 +1727,7 @@ function minorEvent(B){
 /* 줄 서 있는 사건을 차례로 꺼낸다.
    이미 떠 있는 창이 있으면 그것부터 — 시대 알림이 사건에 덮이면 안 된다. */
 function nextEvent(){
-  if(G.popup) return false;
+  if(G.popup || G.pendingReign) return false;
   if(G.pendingEvent){ G.popup={kind:'choice', ev:G.pendingEvent, y:G.year}; G.pendingEvent=null; snd('event'); return true; }
   if(G.evQueue && G.evQueue.length){ G.popup={kind:'choice', ev:G.evQueue.shift(), y:G.year}; snd('event'); return true; }
   return false;
@@ -1670,10 +1903,120 @@ function dipTurn(B){
     }
   });
 }
+/* ================================================================
+   치세가 바뀌는 해
+   ----------------------------------------------------------------
+   승하 → 사관이 지난 치세를 적는다 → 새 임금이 서고 교서를 고른다.
+   이 셋이 한 해에 다 일어난다. 판에서 가장 큰 마디다.
+   ================================================================ */
+function reignTurn(B){
+  const 다음 = kingAt(G.year);
+  const 임금없는때 = G.year>=1910;
+
+  if(!임금없는때){
+    if(다음!==G.king){
+      if(G.king!=null && G.king>=0) closeReign(B, '승하');
+      G.king=다음; G.gen=null;
+      openReign(B);
+    }
+    return;
+  }
+  /* 1910년 뒤 — 임금이 없다. 그래도 열두어 해마다 대가 바뀐다. */
+  if(G.king!=null && G.king>=0){ closeReign(B,'퇴위'); G.king=-1; G.gen=null; }
+  if(!G.gen || G.year-G.gen.y >= G.gen.햇수){
+    if(G.gen) closeReign(B,'물러남');
+    G.genN=(G.genN||0)+1;
+    G.gen=mkGen(G.genN-1);
+    openReign(B);
+  }
+}
+function openReign(B){
+  const K=kingNow(); if(!K) return;
+  /* 이 치세가 어디서 시작했는지 적어 둔다 — 끝에 견주려면 있어야 한다 */
+  G.reign={ y0:G.year, prov0:natProvs('kor').length, node0:Object.keys(G.res.done).length,
+            legit0:Math.round(G.legit), pop0:G.nations.kor.pop,
+            stab:0, 해:0, 전쟁:0, 사화:0, 뺏김:0, 얻음:0 };
+  G.edict=null;
+  G.popup={ kind:'accede', y:G.year, king:K, picks:edictChoices(K) };
+  log('── '+K.나+' 즉위 ──  '+K.말);
+  B.events.push(K.나+' 즉위');
+  snd('era'); MUS.next=0;
+}
+/* 사관의 붓 — 치세를 숫자가 아니라 한 줄로 남긴다.
+   ----------------------------------------------------------------
+   처음에는 평균 민심이 점수를 다 먹어, 서른다섯 치세 가운데 열다섯이
+   성세가 되고 스물일곱이 「백성이 편안하였다」로 끝났다. 등급이 늘 같으면
+   등급이 없는 것과 같고, 글월이 늘 같으면 아무도 두 번 읽지 않는다.
+
+   이제 점수는 '이 사람이 맡은 동안 무엇이 달라졌는가'로만 매긴다.
+   짧은 치세는 그만큼 몫이 줄고(다섯 해를 못 채우면 비례로 깎는다),
+   민심은 거들 뿐 판을 정하지 않는다. */
+function closeReign(B, 어떻게){
+  const K=kingNow(), R=G.reign;
+  if(!K||!R||!R.해) { return; }
+  const 고을=natProvs('kor').length;
+  const 늘=고을-R.prov0, 민심=Math.round(R.stab/Math.max(1,R.해));
+  const 마디=Object.keys(G.res.done).length-R.node0;
+  const 정통=Math.round(G.legit)-R.legit0;
+  let pt = 늘*10 + 마디*7 + 정통*0.9 + clamp((민심-58)*0.5, -18, 18)
+         - R.뺏김*9 + R.얻음*6 - R.사화*5 - R.전쟁*2;
+  if(R.도읍잃음) pt -= 40;
+  // 다섯 해를 못 채운 임금에게 성세도 망조도 씌우지 않는다 — 그럴 틈이 없었다
+  if(R.해<5) pt *= R.해/5;
+  pt = Math.round(pt);
+  const 등급 = pt>=40?'성세' : pt>=18?'치세' : pt>=-6?'평세' : pt>=-30?'난세':'망조';
+
+  /* 붓 — 실제로 일어난 것 가운데 큰 것부터 셋까지. 아무 일도 없었으면 그렇게 적는다. */
+  const 붓=[];
+  if(R.도읍잃음) 붓.push('도읍을 잃었고');
+  if(늘>0) 붓.push('강토가 '+늘+'고을 늘었고');
+  else if(늘<0) 붓.push('강토가 '+(-늘)+'고을 줄었고');
+  if(R.뺏김) 붓.push('성 '+R.뺏김+'을 내주었으며');
+  if(R.얻음 && !늘) 붓.push('밖으로 '+R.얻음+'차례 군사를 내었고');
+  if(마디>=3) 붓.push('학문이 '+마디+'마디를 나아갔고');
+  else if(마디>=1) 붓.push('학문에 '+마디+'마디를 보태었고');
+  if(R.사화>=2) 붓.push('사화가 '+R.사화+'차례 일어났고');
+  else if(R.사화===1) 붓.push('사화가 한 차례 있었고');
+  if(R.전쟁>=2) 붓.push('전쟁이 '+R.전쟁+'차례 있었으며');
+  else if(R.전쟁===1) 붓.push('한 차례 전쟁을 치렀으며');
+  if(R.시대) 붓.push('「'+R.시대+'」의 문턱을 넘었고');
+  /* 사람의 수 — 왕조의 장부에서 늘 첫 줄에 오던 것. 조용한 치세에도 이것은 움직인다. */
+  if(R.pop0 && R.해>=6){
+    const 몫=G.nations.kor.pop/R.pop0;
+    if(몫>=1.16) 붓.push('사람이 '+Math.round((몫-1)*100)+'푼 늘었고');
+    else if(몫<=0.94) 붓.push('사람이 '+Math.round((1-몫)*100)+'푼 줄었고');
+  }
+  if(정통>=12) 붓.push('조정의 명분이 섰으며');
+  else if(정통<=-12) 붓.push('조정의 명분이 얕아졌고');
+  const 몸 = 붓.length? 붓.slice(0,4).join(' ')
+           : (R.해>=8? '이렇다 할 일이 없었으니' : '앉은 날이 짧아 남긴 것이 없었고');
+  /* 맺음 — 민심으로 닫되, 치세의 결에 따라 말을 고른다 */
+  const 맺=[];
+  if(민심>=84) 맺.push('백성이 배불렀다','저자에 웃음이 있었다','창고가 비지 않았다');
+  else if(민심>=70) 맺.push('백성은 편안하였다','고을이 조용하였다','원망하는 소리가 적었다');
+  else if(민심>=54) 맺.push('백성은 그럭저럭 살았다','불평은 있었으나 견딜 만하였다');
+  else if(민심>=36) 맺.push('백성이 시끄러웠다','고을마다 원망이 있었다');
+  else 맺.push('백성이 도탄에 빠졌다','들에 굶어 죽은 이가 있었다');
+  // 같은 치세는 늘 같은 글이 되도록, 해를 씨앗으로 고른다
+  const 맺음 = 맺[(R.y0+R.해) % 맺.length];
+  const 글 = K.나+' 재위 '+R.해+'년. '+몸+' '+맺음+'.';
+
+  G.reigns=G.reigns||[];
+  G.reigns.push({ 나:K.나, 결:K.결, y0:R.y0, y1:G.year, 해:R.해, 등급, pt,
+                  교서:(edictNow()? edictNow().nm : '없음'), 글 });
+  if(G.reigns.length>40) G.reigns.shift();
+  log('── '+K.나+' '+어떻게+' ──  '+글);
+  B.events.push(K.나+' '+어떻게);
+  /* 지난 치세를 한 번은 보고 넘어가게 한다 — 그냥 흘리면 남는 것이 없다 */
+  G.pendingReign={ 나:K.나, 결:K.결, 해:R.해, 등급, pt, 글, y:G.year, 어떻게,
+                   교서:(edictNow()? edictNow().nm : '없음') };
+  snd('lose');
+}
 /* 전쟁을 연다 — 우리가 치거나, 저쪽이 우리를 치거나 */
 function declareWar(k, 우리가){
   const d=dipOf(k); if(!d || d.war) return;
   d.war=true; d.warYears=0; d.truce=0; snd('war'); shake(0.5);
+  if(G.reign) G.reign.전쟁++;
   d.rel=clamp(d.rel-45,-100,100);
   d.trade=false; d.ally=false;
   if(우리가){
@@ -1712,7 +2055,7 @@ function aiTurn(B){
     /* 저희끼리 싸우는 동안에는 군사를 그쪽으로 돌린다.
        손을 잡으면 뒤가 든든해져 조선 쪽으로 더 나온다. */
     if(C && C.war)  기세 += 0.34;
-    if(C && C.ally) 기세 += 0.13;
+    if(C && C.ally) 기세 += 0.20;
     기세 *= diffOf().ai;
     // 전쟁 중에는 한 해에 여러 번 밀어붙인다. 이쪽만 여러 번 치던 것이 어긋남이었다.
     const 횟수 = (d&&d.war)? 3 : (C&&C.war)? 2 : 1;
@@ -1763,8 +2106,9 @@ function aiTurn(B){
           if(옛임자==='kor'){
             G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
             G.legit=clamp(G.legit-5,0,100);
+            if(G.reign) G.reign.뺏김++;
             if(B) B.events.push(q.nm+' 함락');
-            if(q.cap) log('도읍이 넘어갔다.');
+            if(q.cap){ log('도읍이 넘어갔다.'); if(G.reign) G.reign.도읍잃음=1; }
             snd('lose');
             /* 동맹이 있으면 우리를 문 쪽을 문다 — 동맹의 값어치 */
             const 벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
@@ -2064,6 +2408,7 @@ function invade(target){
     log(from.nm+'의 '+r.w.U.nm+이가(r.w.U.nm)+' '+target.nm+을를(target.nm)+' 얻었다. ('+old+' 손실 '+num(r.lossD)+')');
     G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100);
     G.legit=clamp(G.legit+2,0,100);
+    if(G.reign) G.reign.얻음++;
     snd('win');
   } else {
     log(target.nm+을를(target.nm)+' 쳤으나 물러났다. (아군 손실 '+num(r.lossA)+')');
@@ -2112,11 +2457,15 @@ function dipActs(k){
       cost:d&&d.ally? 0 : Math.round(300*물가),
       /* 명과 일본은 서로를 겨눈다. 둘 다와 형제가 될 수는 없다 —
          그럴 수 있으면 아무도 우리를 못 치게 되어 놀이가 끝난다. */
-      can:()=>!!d && !d.war && (d.ally || (d.rel>=60 && !DIP_NATS.some(o=>o!==k && dipOf(o) && dipOf(o).ally))),
+      /* 둘이 서로 형제가 되어 있으면 조선은 어느 쪽과도 손을 잡을 수 없다 —
+         이미 짝이 있는 사람에게 형제를 청할 수는 없다. */
+      can:()=>!!d && !d.war && (d.ally || (d.rel>=60 && !(G.cj&&G.cj.ally)
+                                && !DIP_NATS.some(o=>o!==k && dipOf(o) && dipOf(o).ally))),
       desc:()=>{
         const 딴벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
         return d.ally
         ? '동맹을 거둔다.  사이 −20.'
+        : (G.cj&&G.cj.ally)? (natName('chn')+과와(natName('chn'))+' '+natName('jpn')+이가(natName('jpn'))+' 이미 서로 손을 잡았다. 그 사이를 벌려 놓기 전에는 어느 쪽과도 맺을 수 없다.')
         : 딴벗? ('이미 '+natName(딴벗)+과와(natName(딴벗))+' 동맹을 맺었다. 둘 다와 형제가 될 수는 없다.')
         : '사이 60 이상이라야 한다 (지금 '+Math.round(d.rel)+').'
           + '  우리가 지킬 때 군사를 보내고, 우리를 친 쪽을 문다.'
@@ -2298,6 +2647,18 @@ function advice(){
     else if(d.rel<-30) 더(62, natName(k)+'과의 사이가 '+Math.round(d.rel),
       '사이가 나쁘면 먼저 물린다. 사신을 보내 두는 편이 싸게 먹힌다.', ()=>{ G.tab='외교'; });
   });
+
+  /* 다가오는 일 — 가까울수록 급해진다. 가장 위에 서야 하는 줄이다. */
+  const 조짐=omenNow();
+  if(조짐){
+    const {O,남}=조짐;
+    const 급 = 남<=3? 96 : 남<=7? 82 : 남<=12? 68 : 56;
+    const 볼곳=O.본다();
+    더(급, 남+'해 뒤 — '+O.나, O.말+'  '+O.채비,
+      볼곳.length? ()=>{ const p=볼곳.find(id=>G.provs[id]&&G.provs[id].nat==='kor');
+                         if(p){ G.sel=p; G.mapFocus='korea'; } }
+                 : ()=>{ G.tab='기술'; });
+  }
 
   /* 이웃끼리의 사이 — 틈이 열렸는지, 사이에 끼었는지 */
   const C=G.cj;
@@ -2860,7 +3221,8 @@ function draw(){
   drawSide(g);
   drawBottom(g);
   // 메뉴 → 결산 → 사건 → 결과. 창이 떠 있으면 뒤쪽 단추는 죽는다.
-  const 창것 = MENU || G.report || G.popup;
+  /* 치세가 끝난 자리는 즉위보다 먼저 보인다 — 죽고 나서 앉는 것이 차례다 */
+  const 창것 = MENU || G.report || G.pendingReign || G.popup;
   if(창것!==MODAL_REF){ MODAL_REF=창것; MODAL_T=0; } else MODAL_T+=DT;
   if(창것){
     // 커지며 나타난다 — 덜컥 튀어나오면 무슨 창인지 읽을 틈이 없다
@@ -2873,6 +3235,7 @@ function draw(){
     }
     if(MENU){ MODAL=HIT.length; drawMenu(g); }
     else if(G.report){ MODAL=HIT.length; drawReport(g); }
+    else if(G.pendingReign){ MODAL=HIT.length; drawReignEnd(g); }
     else { MODAL=HIT.length; drawPopup(g); }
     g.restore();
   }
@@ -2890,11 +3253,43 @@ function drawTop(g){
   g.fillText(G.year+'년', 16, 좁?26:30);
   g.fillStyle='#c9bfa8'; g.font=(좁?'12px':'14px')+' serif';
   g.fillText(ERAS[G.era].nm, 좁?84:96, 좁?26:30);
+  /* 임금 — 지금 누구의 치세인가. 판에 사람의 이름이 하나는 있어야 한다. */
+  const K=kingNow();
+  let 왼끝=(좁?84:96)+g.measureText(ERAS[G.era].nm).width;
+  if(K){
+    const 재위=G.reign? G.reign.해 : 0;
+    const 글=K.나+(재위? '  '+재위+'년' : '');
+    const kx=왼끝+(좁?10:14);
+    g.font=(좁?'12px':'14px')+' serif';
+    const kw=g.measureText(글).width+16;
+    if(!좁 || kx+kw < CFG.W-212){
+      g.fillStyle='rgba(190,150,80,.16)'; g.fillRect(kx, 좁?14:16, kw, 좁?17:19);
+      g.strokeStyle='rgba(224,189,118,.45)'; g.lineWidth=1;
+      g.strokeRect(kx+.5, (좁?14:16)+.5, kw-1, (좁?17:19)-1);
+      g.fillStyle='#e0bd76'; g.fillText(글, kx+8, 좁?26:30);
+      왼끝=kx+kw;
+      if(inRect(Mouse,{x:kx,y:좁?14:16,w:kw,h:20})){
+        const 재=traitLines(K).map(t=>t[0]).join(' · ');
+        const E3=edictNow();
+        G.tip=K.결+' — '+K.말 + (재? '    '+재 : '')
+            + (E3? '    교서 「'+E3.nm+'」 '+E3.짧 : '');
+      }
+    }
+  }
+  const 조짐=omenNow();
   if(싸움.length){
     g.fillStyle='#c4534a'; g.font='11px serif';
     g.fillText('전쟁 · '+싸움.map(natName).join(' · '), 16, 좁?42:47);
     if(inRect(Mouse,{x:12,y:좁?32:36,w:180,h:16}))
       G.tip='싸움이 길어지면 민심이 깎이고 군 유지비가 오른다. 외교 판에서 화친을 청할 수 있다.';
+  } else if(조짐){
+    /* 다가오는 일 — 해가 줄어드는 것이 보여야 준비할 마음이 든다 */
+    const 남=조짐.남;
+    g.fillStyle= 남<=3? '#c4534a' : 남<=8? '#c9a24a' : 'rgba(150,145,135,.85)';
+    g.font='11px serif';
+    g.fillText(조짐.O.나+'까지 '+남+'해', 16, 좁?42:47);
+    if(inRect(Mouse,{x:12,y:좁?32:36,w:200,h:16}))
+      G.tip=조짐.O.말+'   '+조짐.O.채비;
   } else if(!좁){
     g.fillStyle='rgba(150,145,135,.8)'; g.font='11px serif';
     g.fillText('v'+VERSION, 16, 47);
@@ -2928,7 +3323,8 @@ function drawTop(g){
     btn(g, CFG.W-72, 10, 58, 26, '메뉴', false, ()=>{ MENU={tab:null}; });
   } else {
     const keys=['gold','food','pop','army','tech','prov'];
-    let x=LAY.small?176:210;
+    /* 눈금은 왼쪽 글월이 끝난 뒤에 선다 — 자리를 못박아 두면 임금 이름이 국고를 덮는다 */
+    let x=Math.max(LAY.small?176:210, 왼끝+18);
     items.forEach(([k,v,c],i)=>{
       let tx=x;
       if(blit(g,'icons',ICON_UV[keys[i]],x,18,32,32,18,18)) tx=x+22;
@@ -3926,6 +4322,33 @@ function sideTech(g,x,y,w){
 function sideLog(g,x,y,w){
   g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('기록', x, y+12);
   let yy=y+34;
+  /* ── 지나간 치세 ──
+     한 해 한 해의 잔글씨보다, 누가 얼마를 다스렸고 사관이 무어라 적었는지가
+     판을 돌아볼 때 남는 것이다. 그래서 맨 위에 둔다. */
+  const 치=(G.reigns||[]);
+  if(치.length){
+    g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+    g.fillText('지나간 치세 '+치.length, x, yy-6);
+    yy+=8;
+    const 빛={성세:'#8fa86a', 치세:'#e0bd76', 평세:'#c9bfa8', 난세:'#c9a24a', 망조:'#c4534a'};
+    치.slice().reverse().forEach(R=>{
+      const hov=inRect(Mouse,{x:x-4,y:yy-12,w:w+8,h:34});
+      if(hov){ g.fillStyle='rgba(190,150,80,.12)'; g.fillRect(x-4,yy-12,w+8,34); G.tip=R.글; }
+      g.fillStyle=빛[R.등급]||'#c9bfa8'; g.fillRect(x-4, yy-10, 2, 26);
+      g.fillStyle='#e8e1d1'; g.font='13px serif'; g.fillText(R.나, x+6, yy);
+      g.fillStyle='rgba(150,145,135,.75)'; g.font='10px serif';
+      g.fillText(R.y0+'–'+R.y1+'  '+R.해+'년', x+6+g.measureText(R.나).width+10, yy);
+      g.fillStyle=빛[R.등급]||'#c9bfa8'; g.font='12px serif'; g.textAlign='right';
+      g.fillText(R.등급, x+w, yy); g.textAlign='left';
+      g.fillStyle='rgba(140,135,125,.8)'; g.font='9px serif';
+      const 짧 = R.글.length>44? R.글.slice(0,43)+'…' : R.글;
+      g.fillText(짧, x+6, yy+13);
+      yy+=34;
+    });
+    divider(g,x,yy-6,w); yy+=14;
+    g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+    g.fillText('해마다', x, yy-6); yy+=8;
+  }
   G.log.slice(0,60).forEach(L=>{
     g.fillStyle='rgba(150,145,135,.6)'; g.font='10px serif'; g.fillText(L.y+'', x, yy);
     g.fillStyle='#c9bfa8'; g.font='12px serif';
@@ -4330,9 +4753,108 @@ function drawScores(g,x,y,w){
   g.textAlign='right'; g.fillText(tot+'점', x+w, y); g.textAlign='left';
   return y+22;
 }
+/* 즉위 — 새 임금과 첫 교서.
+   이 창은 알림이 아니라 고름이다. 여기서 정한 것이 그 치세 내내 간다. */
+function drawAccede(g){
+  const P=G.popup, K=P.king;
+  g.fillStyle='rgba(4,5,8,.82)'; g.fillRect(0,0,CFG.W,CFG.H);
+  const w=창폭(620);
+  g.font='13px serif';
+  const 말줄=wrapText(g,K.말,w-90).slice(0, LAY.phone?4:2);
+  const 재줄=traitLines(K);
+  const h=Math.min(CFG.H-24, 214 + 말줄.length*19 + 재줄.length*16 + P.picks.length*62);
+  const x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  bigPanel(g,x,y,w,h);
+  g.textAlign='center';
+  g.fillStyle='rgba(150,145,135,.8)'; g.font='12px serif';
+  g.fillText(P.y+'년  ·  즉위', CFG.W/2, y+34);
+  g.fillStyle='#e0bd76'; g.font=(LAY.phone?'30px':'34px')+' serif';
+  g.fillText(K.나, CFG.W/2, y+76);
+  g.fillStyle='rgba(196,140,74,.9)'; g.font='12px serif';
+  g.fillText(K.결, CFG.W/2, y+96);
+  g.textAlign='left';
+  let yy=y+120;
+  g.fillStyle='#d9d2c2'; g.font='13px serif';
+  말줄.forEach(t=>{ g.fillText(t, x+44, yy); yy+=19; });
+  yy+=4;
+  // 재주 — 이 임금 밑에서 무엇이 달라지는가
+  g.font='11px serif';
+  재줄.forEach(([말,좋음])=>{
+    g.fillStyle= 좋음? 'rgba(143,168,106,.95)' : 'rgba(196,83,74,.95)';
+    g.fillText(말, x+44, yy); yy+=16;
+  });
+  yy+=10;
+  g.fillStyle='#e0bd76'; g.font='13px serif'; g.fillText('즉위 교서', x+44, yy); yy+=6;
+  g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif'; g.textAlign='right';
+  g.fillText('이 치세가 끝날 때까지 간다', x+w-44, yy-6); g.textAlign='left';
+  P.picks.forEach((e,i)=>{
+    const bh=54, by=yy+6+i*62;
+    const hov=inRect(Mouse,{x:x+34,y:by,w:w-68,h:bh});
+    g.fillStyle= hov?'rgba(190,150,80,.22)':'rgba(24,28,34,.85)';
+    g.fillRect(x+34,by,w-68,bh);
+    g.strokeStyle= hov?'rgba(224,189,118,.9)':'rgba(190,158,96,.3)';
+    g.lineWidth=1; g.strokeRect(x+34.5,by+.5,w-69,bh-1);
+    g.fillStyle= hov?'#f0e2be':'#c9bfa8'; g.font='14px serif';
+    g.fillText((i+1)+'.  '+e.nm, x+48, by+22);
+    g.fillStyle='rgba(224,189,118,.85)'; g.font='10px serif';
+    g.fillText(e.짧, x+48, by+38);
+    if(hov) G.tip=e.설;
+    hz(x+34,by,w-68,bh, ()=>{
+      G.edict=e.id;
+      log('즉위 교서 — 「'+e.nm+'」');
+      G.popup=null; snd('treaty'); nextEvent();
+    });
+    HIT[HIT.length-1].choice=i;
+  });
+  g.fillStyle='rgba(130,125,115,.7)'; g.font='11px serif'; g.textAlign='center';
+  g.fillText('1 · 2 · 3 으로도 고른다', CFG.W/2, y+h-14); g.textAlign='left';
+}
+/* 재주를 사람 말로 — 숫자를 그대로 보여 주면 아무도 읽지 않는다 */
+function traitLines(K){
+  const 재=(K&&K.재)||{}, out=[];
+  const 곱=(k,말)=>{ const v=재[k]; if(v==null||v===1) return;
+    out.push([말+' '+(v>1?'+':'−')+Math.round(Math.abs(v-1)*100)+'%', v>1]); };
+  const 더=(k,말)=>{ const v=재[k]; if(!v) return;
+    out.push([말+' '+(v>0?'+':'−')+Math.abs(v).toFixed(1)+'/년', v>0]); };
+  곱('학문','연구'); 곱('무','공격'); 곱('지킴','수비'); 곱('재정','국고');
+  더('다스림','민심'); 더('그릇','정통');
+  if(재.붕당) out.push(['당쟁 '+(재.붕당>0?'거세다':'잦아든다'), 재.붕당<0]);
+  return out;
+}
+/* 사관의 붓 — 치세가 끝난 자리 */
+function drawReignEnd(g){
+  const R=G.pendingReign;
+  g.fillStyle='rgba(4,5,8,.84)'; g.fillRect(0,0,CFG.W,CFG.H);
+  const w=창폭(600);
+  g.font='13px serif';
+  const 줄=wrapText(g,R.글,w-96).slice(0, LAY.phone?6:3);
+  const h=Math.min(CFG.H-24, 226+줄.length*20);
+  const x=(CFG.W-w)/2, y=(CFG.H-h)/2;
+  bigPanel(g,x,y,w,h);
+  g.textAlign='center';
+  g.fillStyle='rgba(150,145,135,.8)'; g.font='12px serif';
+  g.fillText(R.y+'년  ·  '+R.어떻게, CFG.W/2, y+34);
+  g.fillStyle='#e0bd76'; g.font=(LAY.phone?'28px':'32px')+' serif';
+  g.fillText(R.나, CFG.W/2, y+74);
+  g.fillStyle='rgba(150,145,135,.85)'; g.font='12px serif';
+  g.fillText('재위 '+R.해+'년  ·  '+R.결+'  ·  교서 「'+R.교서+'」', CFG.W/2, y+96);
+  // 도장
+  const 빛={성세:'#8fa86a', 치세:'#e0bd76', 평세:'#c9bfa8', 난세:'#c9a24a', 망조:'#c4534a'};
+  g.fillStyle=빛[R.등급]||'#c9bfa8'; g.font='26px serif';
+  g.fillText(R.등급, CFG.W/2, y+136);
+  g.textAlign='left';
+  g.fillStyle='#d9d2c2'; g.font='13px serif';
+  줄.forEach((t,i)=>{ g.fillText(t, x+48, y+168+i*20); });
+  g.textAlign='center'; g.fillStyle='rgba(130,125,115,.7)'; g.font='10px serif';
+  g.fillText('사관이 이렇게 적었다', CFG.W/2, y+h-52); g.textAlign='left';
+  btn(g, CFG.W/2-70, y+h-40, 140, 30, '덮는다', false, ()=>{
+    G.pendingReign=null; nextEvent();
+  });
+}
 function drawPopup(g){
   const P=G.popup;
   if(P.kind==='choice'){ drawChoice(g); return; }
+  if(P.kind==='accede'){ drawAccede(g); return; }
   g.fillStyle='rgba(4,5,8,.76)'; g.fillRect(0,0,CFG.W,CFG.H);
   const 끝=(P.kind==='end');
   const w=창폭(600), h=끝?(200+G.scores.length*19+90):210;
@@ -4384,6 +4906,8 @@ function packSave(){
     /* 예전 판이 흘리던 것들 — 다시 불러오면 사라져 있던 상태 */
     evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
     res:G.res, dip:G.dip, cj:G.cj, byeol:G.byeol, saheWait:G.saheWait, tab:G.tab, sel:G.sel, view:G.view,
+    king:G.king, gen:G.gen, genN:G.genN, edict:G.edict, reign:G.reign, reigns:G.reigns,
+    pendingReign:G.pendingReign,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
     farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0,
@@ -4431,6 +4955,13 @@ function loadGame(slot){
     // 이웃끼리의 사이 — 0.6.0 이전 판에는 없다. 없으면 새 판의 자리에서 시작한다.
     if(d.cj) Object.assign(G.cj, d.cj);
     G.byeol=d.byeol||0; G.saheWait=d.saheWait||0;
+    /* 임금과 치세 — 0.7.0 이전 판에는 없다. 없으면 그 해의 임금을 다시 앉힌다. */
+    G.king = (d.king!==undefined)? d.king : (G.year<1910? kingAt(G.year) : -1);
+    G.gen=d.gen||null; G.genN=d.genN||0; G.edict=d.edict||null;
+    G.reign=d.reign|| { y0:G.year, prov0:natProvs('kor').length,
+                        node0:Object.keys(G.res.done).length, legit0:Math.round(G.legit),
+                        pop0:G.nations.kor.pop, stab:0, 해:0, 전쟁:0, 사화:0, 뺏김:0, 얻음:0 };
+    G.reigns=d.reigns||[]; G.pendingReign=d.pendingReign||null;
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
     if(d.sel && d.sel in G.provs) G.sel=d.sel;
@@ -4761,7 +5292,7 @@ function tick(){
   LAST_T=t; NOW=t;
   fxTick(DT);
   musicTick();
-  const 창 = !!(G.popup || G.report || MENU);
+  const 창 = !!(G.popup || G.report || MENU || G.pendingReign);
   if(Key.pressed['Space'] && !창 && !G.ended && SCENE==='play'){ Key.pressed['Space']=false; snd('year'); endTurn(); }
   if(Key.pressed['KeyM'] && !창 && SCENE==='play'){
     Key.pressed['KeyM']=false; G.mapMode=G.mapMode==='terrain'?'political':'terrain';
@@ -4794,11 +5325,15 @@ function tick(){
     }
     else if(G.report){ /* 결산은 도망칠 수 없다 */ }
     // 선택지와 결말도 도망칠 수 없다
-    else if(G.popup && G.popup.kind!=='choice' && G.popup.kind!=='end') G.popup=null;
+    // 즉위 교서도 도망칠 수 없다 — 고르지 않고 넘길 수 있으면 고름이 아니다
+    else if(G.pendingReign){ /* 사관의 글은 단추로 덮는다 */ }
+    else if(G.popup && G.popup.kind!=='choice' && G.popup.kind!=='end'
+            && G.popup.kind!=='accede') G.popup=null;
     else if(!G.popup && SCENE==='play') MENU={tab:null};
   }
   // 선택지 창에서는 1·2·3으로도 고른다
-  if(창 && !MENU && G.popup && G.popup.kind==='choice'){
+  if(창 && !MENU && !G.pendingReign && G.popup
+     && (G.popup.kind==='choice' || G.popup.kind==='accede')){
     ['Digit1','Digit2','Digit3'].forEach((k,i)=>{
       if(Key.pressed[k]){ Key.pressed[k]=false; G.pickChoice=i; }
     });

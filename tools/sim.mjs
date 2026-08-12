@@ -344,6 +344,8 @@ function snapshot(G){
     '연구':{ pt:G.res.pt, done:G.res.done },
     '외교':G.dip,
     '이웃끼리':G.cj,
+    '임금':{ king:G.king, gen:G.gen, genN:G.genN, edict:G.edict },
+    '치세':{ reign:G.reign, reigns:G.reigns },
     '국고':G.nations.kor.gold, '식량':G.nations.kor.food, '기술':G.nations.kor.tech,
     '신하':G.officials.map(o=>o.nm+':'+o.post+':'+Math.round(o.loy)).sort(),
     '고을':Object.entries(G.provs).map(([k,p])=>
@@ -575,7 +577,9 @@ const PLANS = {
       /* 이웃이 손을 잡을 낌새면 먼저 벌린다 — 명령보다 앞선다 */
       if(C){
         const a = api.call('cjActs').find(x => x.id === 'wedge');
-        if(a && a.can() && (N.adm||0) >= a.adm && N.gold >= a.cost*2 && C.rel > -30){
+        /* 사람이라면 늘 벌리지는 않는다 — 둘이 가까워질 때만 손을 쓴다.
+           해마다 정무 둘과 180전을 태우면 그것만으로 나라가 기운다. */
+        if(a && a.can() && (N.adm||0) >= a.adm && N.gold >= a.cost*2 && C.rel > 20){
           N.gold -= a.cost; N.adm -= a.adm; a.run();
         }
       }
@@ -606,6 +610,18 @@ function runOne(planKey, seed){
   api.call('newGame');
   const G = api.get('G');
   const trace = [];
+  /* 즉위 교서 — 사람이 고르는 자리다. 시뮬레이터는 두는 법에 맞는 것을 집는다. */
+  const 교서고르기 = () => {
+    if(!G.popup || G.popup.kind !== 'accede') return;
+    const picks = G.popup.picks || [];
+    const 바람 = { idle:[], govern:['inj','nong'], good:['inj','hak','nong','jae'],
+                  conquer:['mu','jae'], rush:['mu','jae'], envoy:['gyo','inj'],
+                  wedge:['mu','gyo'] }[planKey] || [];
+    let e = picks.find(p => 바람.includes(p.id)) || picks[0];
+    if(e) G.edict = e.id;
+    G.popup = null;
+  };
+  교서고르기();
 
   let year = G.year, guard = 0;
   /* 언제 얼마나 먹었는지 — 정복이 너무 쉬운지 재는 눈금 */
@@ -622,6 +638,9 @@ function runOne(planKey, seed){
 
     /* 결산과 사건을 사람 대신 넘긴다 */
     G.report = null;
+    /* 치세가 끝난 자리와 즉위 — 사람이 덮고 고를 자리다 */
+    if(G.pendingReign) G.pendingReign = null;
+    교서고르기();
     if(G.pendingEvent){
       const ev = G.pendingEvent;
       const i = pickChoice(ev, planKey === 'idle' ? 'worst' : 'best');
@@ -629,6 +648,7 @@ function runOne(planKey, seed){
       G.pendingEvent = null;
     }
     if(G.popup && G.popup.kind !== 'end') G.popup = null;
+    if(G.pendingReign) G.pendingReign = null;
 
     const C = G.cj;
     if(C){
