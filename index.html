@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '0.9.3';
+const VERSION = '1.0.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -1020,7 +1020,7 @@ function newGame(){
       evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
       res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0,
       king:null, gen:null, genN:0, edict:null, reign:null, reigns:[], pendingReign:null,
-      saga:newSaga() };
+      saga:newSaga(), armies:[], armySel:null };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -1490,7 +1490,7 @@ function endTurn(){
   const 조공국 = DIP_NATS.filter(k=>dipOf(k) && dipOf(k).tribute);
   B.tribute    = Math.round(조공국.length * (30 + natProvs('kor').length*6) * 물가);
   B.tributeFood= Math.round(조공국.length * N.pop/90000);
-  const upkeep = B.upkeepArmy + B.upkeepPay + B.upkeepFort + B.tribute;
+  const upkeep = B.upkeepArmy + B.upkeepPay + B.upkeepFort + B.tribute + (B.upkeepField||0);
   B.polDrain   = Math.max(0, Math.round(N.gold*(1-M.goldMul)));   // 정책이 갉아먹는 몫
   B.interest   = Math.round((B.interest||0) + N.gold*M.interest); // 개성 상인과 상평통보
 
@@ -1659,6 +1659,7 @@ function endTurn(){
   sagaTick(B);
   /* 치세의 장부 — 이 임금이 맡은 동안의 몫만 센다 */
   if(G.reign){ G.reign.해++; G.reign.stab += N.stab; }
+  armyTurn(B);
   reignTurn(B);
   dipTurn(B);
   cjTurn(B);
@@ -2064,69 +2065,62 @@ function aiTurn(B){
     if(C && C.war)  기세 += 0.34;
     if(C && C.ally) 기세 += 0.20;
     기세 *= diffOf().ai;
-    // 전쟁 중에는 한 해에 여러 번 밀어붙인다. 이쪽만 여러 번 치던 것이 어긋남이었다.
-    const 횟수 = (d&&d.war)? 3 : (C&&C.war)? 2 : 1;
-    for(let 시도=0; 시도<횟수; 시도++)
-    if(Math.random()<기세){
-      const mine=natProvs(k);
-      let best=null, bs=0;
-      mine.forEach(p=>{
-        [...p.adj].forEach(id=>{
-          const q=G.provs[id]; if(!q || q.nat===k) return;
-          // 동맹이거나 휴전 중이면 조선을 건드리지 않는다
-          if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
-          // 이웃끼리 손을 잡았거나 쉬기로 했으면 저희끼리도 건드리지 않는다
-          if(q.nat===상대 && C && (C.ally || C.truce>0)) return;
-          /* 셈은 플레이어가 걸 때와 똑같다 — 화면에 보여 주는 낌새와
-             이웃이 판단하는 수가 같아야 한다. */
-          const w=warPower(p,q);
-          const 이길낌새=winChance(w.atk, w.def);
-          // 사대교린과 세폐는 큰 나라의 발길을 늦춘다
-          const 눈치 = (q.nat==='kor')? M.invRisk : 1;
-          // 사이가 나쁠수록 조선을 먼저 문다. 좋으면 다른 데를 본다.
-          let 미움 = (q.nat==='kor' && d)? clamp(0.15 - d.rel/240, -0.25, 0.6) : 0;
-          if(q.home===k && q.nat!==k) 미움 += 0.9;          // 빼앗긴 제 땅
-          if(q.nat==='kor') 미움 += clamp((natProvs('kor').length-16)*0.035, 0, 0.9);
-          // 저희끼리 싸우는 중이면 상대의 고을을 먼저 본다
-          if(q.nat===상대 && C) 미움 += C.war? 1.1 : clamp(-C.rel/160, -0.2, 0.5);
-          const s2=(이길낌새 + (q.unrest/200) + 미움)*눈치;
-          // 이길 낌새가 어지간해야 군사를 낸다. 그래도 주사위는 던진다 —
-          // 반반인 싸움에 뛰어드는 것은 슬기로운 조정이 아니라 무모한 조정이다.
-          if(이길낌새>diffOf().thr && s2>bs){ bs=s2; best=[p,q]; }
-        });
-      });
-      if(best){
-        const [from,q]=best;
-        const 옛임자=q.nat;
-        if(옛임자==='kor' && d && !d.war) declareWar(k, false);
-        // 이웃이 이웃을 치면 그것도 전쟁이다 — 여태 아무 일 없이 땅만 오갔다
-        if(옛임자===상대 && C && !C.war){
-          C.war=true; C.warYears=0; C.truce=0; C.ally=false; C.trade=false;
-          C.rel=clamp(C.rel-30,-100,100);
-          log(natName(k)+이가(natName(k))+' '+natName(상대)+'에 군사를 냈다.');
-          if(B) B.events.push('명·일본 전쟁');
-        }
-        const r=resolveBattle(from, q);
-        if(r.won){
-          q.nat=k;
-          log(natName(k)+이가(natName(k))+' '+q.nm+을를(q.nm)+' 차지했다.');
-          if(옛임자==='kor'){
-            G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
-            G.legit=clamp(G.legit-5,0,100);
-            if(G.reign) G.reign.뺏김++;
-            sagaDo('lost', q.nm);
-            if(B) B.events.push(q.nm+' 함락');
-            if(q.cap){ log('도읍이 넘어갔다.'); if(G.reign) G.reign.도읍잃음=1; }
-            snd('lose');
-            /* 동맹이 있으면 우리를 문 쪽을 문다 — 동맹의 값어치 */
-            const 벗=DIP_NATS.find(o=>o!==k && dipOf(o) && dipOf(o).ally);
-            if(벗) allyStrike(벗, k, B);
-          }
-        } else {
-          log(natName(k)+이가(natName(k))+' '+q.nm+을를(q.nm)+' 쳤으나 물러났다.');
-          if(옛임자==='kor' && B) B.events.push(q.nm+' 방어');
-        }
+    /* 이웃도 이제 판 위에 군을 세운다. 즉시 점령은 없어졌다 —
+       한쪽만 걸어 다니고 다른 쪽은 순간 이동하면 그것은 같은 놀이가 아니다. */
+    aiArmy(k, C, 상대, 기세, B);
+  });
+}
+/* 이웃의 용병술 — 군을 세우고, 목표를 잡고, 한 걸음씩 간다 */
+function aiArmy(k, C, 상대, 기세, B){
+  const d=dipOf(k), M=mods();
+  const 내군=armyList(k);
+  const 내땅=natProvs(k);
+  /* ① 새 군을 세운다 — 기세가 서면, 그리고 너무 많이 세우지는 않는다 */
+  const 상한=clamp(1+Math.floor(내땅.length/7), 1, 4);
+  if(내군.length<상한 && Math.random()<기세){
+    // 국경 고을 가운데 군사가 가장 많은 곳
+    const 국경=내땅.filter(p=>[...p.adj].some(id=>G.provs[id]&&G.provs[id].nat!==k)
+                            && !armiesAt(p.id).some(a=>a.nat===k))
+                   .sort((a,b)=>b.army-a.army)[0];
+    if(국경){
+      const 남길=Math.round(garrisonTarget(국경)*0.5);
+      const men=Math.floor((국경.army-남길)/500)*500;
+      if(men>=2000){
+        국경.army-=men;
+        G.armies.push({ id:ARMY_ID++, nat:k, at:국경.id, dest:null, men, siege:0, mv:0, born:G.year });
+        log(natName(k)+'이 '+국경.nm+'에서 군사를 일으켰다.');
+        if(B) B.events.push(natName(k)+' 출병');
       }
+    }
+  }
+  /* ② 세워 둔 군을 움직인다 */
+  내군.forEach(A=>{
+    if(A.dest) return;                       // 이미 가는 중
+    const P=G.provs[A.at]; if(!P) return;
+    if(P.nat!==k) return;                    // 남의 성을 밀고 있는 중이면 그대로
+    let best=null, bs=-1e9;
+    [...P.adj].forEach(id=>{
+      const q=G.provs[id]; if(!q || q.nat===k) return;
+      if(q.nat==='kor' && d && (d.ally || d.truce>0)) return;
+      if(q.nat===상대 && C && (C.ally || C.truce>0)) return;
+      const 힘=armyAtk(A)/Math.max(1, provDef(q,A));
+      if(힘<0.62) return;                    // 못 밀 성은 보지 않는다
+      const 눈치=(q.nat==='kor')? M.invRisk : 1;
+      let 미움=(q.nat==='kor'&&d)? clamp(0.15-d.rel/240,-0.25,0.6) : 0;
+      if(q.home===k && q.nat!==k) 미움+=0.9;
+      if(q.nat===상대 && C) 미움 += C.war? 1.1 : clamp(-C.rel/160,-0.2,0.5);
+      if(q.nat==='kor') 미움 += clamp((natProvs('kor').length-16)*0.035, 0, 0.9);
+      const s2=(힘 + q.unrest/200 + 미움)*눈치;
+      if(s2>bs){ bs=s2; best=q; }
+    });
+    if(best){
+      orderMove(A, best.id);
+      if(best.nat==='kor' && d && !d.war) declareWar(k, false);
+    } else if(Math.random()<0.10){
+      // 갈 데가 없으면 국경 쪽으로 물린다
+      const 뒤=[...P.adj].map(id=>G.provs[id]).filter(q=>q&&q.nat===k)
+        .sort((a,b)=>b.army-a.army)[0];
+      if(뒤) orderMove(A, 뒤.id);
     }
   });
 }
@@ -2282,18 +2276,21 @@ const ACTIONS=[
   /* 싸움만은 국고로 살 수 없다. 별칙은 조정이 지쳐도 돈으로 밀어붙이는 손이지만,
      군사를 일으키는 일은 조정이 정해야 한다. 이것을 열어 두었더니 돈만 있으면
      한 해에 열 번도 칠 수 있었고, 그것이 곧 스무 해 만의 통일이었다. */
-  { id:'gong', nm:'친다', cost:120, adm:2, noByeol:true, need:p=>p.nat!=='kor'&&adjToKor(p),
-    /* 눌러 보고 나서야 아는 싸움은 선택이 아니다. 미리 낌새를 보여 준다. */
-    desc:p=>{ const o=warOdds(p);
-      if(!o) return '인접한 우리 고을이 없다.';
-      const d=dipOf(p.nat);
-      return o.from.nm+'의 '+o.U.nm+'로 친다.  이길 낌새 '+Math.round(o.p*100)+'%'
-        + '  ('+num(Math.round(o.atk))+' 대 '+num(Math.round(o.def))+')'
-        + (o.원군>1? '  · 이웃 고을이 원군 '+num(Math.round(o.원군))+'을 보낸다' : '')
-        + (o.원병>1? '  · '+natName(o.벗)+이가(natName(o.벗))+' 원병을 '+num(Math.round(o.원병))+' 보낸다' : '')
-        + (o.육로? '' : '  · 바닷길')
-        + (d && !d.war? '  ·  '+natName(p.nat)+과와(natName(p.nat))+' 전쟁이 열린다' : ''); },
-    run:p=>{ invade(p); } }
+  { id:'gong', nm:'출정', cost:120, adm:2, noByeol:true,
+    need:p=>p.nat==='kor' && raisable(p)>=1000 && armiesAt(p.id).filter(a=>a.nat==='kor').length===0,
+    /* 여태 이 단추는 남의 고을을 즉시 가져왔다. 이제는 군사를 일으킬 뿐이다 —
+       어디로 갈지, 몇 해를 들일지는 판 위에서 정한다. */
+    desc:p=>{
+      const men=raisable(p);
+      if(men<1000) return '일으킬 군사가 모자란다. 수비병은 남겨 두어야 한다.';
+      if(armiesAt(p.id).filter(a=>a.nat==='kor').length) return '이 고을에는 이미 군이 서 있다.';
+      const 적=[...p.adj].map(id=>G.provs[id]).filter(q=>q&&q.nat!=='kor');
+      const 첫=적.sort((a,b)=>provDef(a,null)-provDef(b,null))[0];
+      return num(men)+'을 일으켜 판 위에 세운다.  수비병 '+num(p.army-men)+'은 남는다.'
+        + '  군은 한 해에 이웃 하나씩 움직이고, 남의 성에 닿으면 포위가 시작된다.'
+        + (첫? ('    가장 무른 이웃은 '+첫.nm+' (지키는 힘 '+num(Math.round(provDef(첫,null)))+')') : '');
+    },
+    run:p=>{ raiseArmy(p); } }
 ];
 function actCost(a,p){
   const M=mods();
@@ -2437,6 +2434,192 @@ function resolveBattle(from, target){
     G.plateDirty=true;
   }
   return { won, lossA, lossD, w, 승산 };
+}
+
+/* ================================================================
+   군 — 판 위에 서는 군대
+   ----------------------------------------------------------------
+   여태 「친다」는 단추 하나였다. 누르면 주사위가 굴러 고을이 즉시 넘어왔다.
+   전선도 없고, 군대가 어디 있는지도 없고, 비운 자리도 없었다.
+   그래서 전쟁이 판단이 아니라 손가락이었다.
+
+   이제 군사를 일으키면 판 위에 말이 하나 선다.
+     한 해에 이웃 고을 하나씩 움직인다 (바닷길·산길은 두 해)
+     남의 고을에 닿으면 포위가 시작된다 — 성이 높으면 여러 해 걸린다
+     남의 군대와 마주치면 야전이 벌어진다
+     제 땅 밖에서는 해마다 줄어들고, 군량이 든다
+   군대는 한 번에 한 곳에만 있을 수 있다. 그것이 이 층의 전부이자 핵심이다.
+   ================================================================ */
+let ARMY_ID=1;
+function armyList(nat){ return (G.armies||[]).filter(a=>!nat||a.nat===nat); }
+function armiesAt(id){ return (G.armies||[]).filter(a=>a.at===id); }
+function armySel(){ return (G.armies||[]).find(a=>a.id===G.armySel) || null; }
+/* 일으킬 수 있는 군사 — 수비병은 남겨 둔다 */
+function raisable(P){
+  if(!P || P.nat!=='kor') return 0;
+  const 남길=Math.round(garrisonTarget(P)*0.55);
+  return Math.max(0, Math.floor((P.army-남길)/500)*500);
+}
+function raiseArmy(P){
+  const men=raisable(P); if(men<1000) return null;
+  P.army-=men;
+  const A={ id:ARMY_ID++, nat:'kor', at:P.id, dest:null, men, siege:0, mv:0, born:G.year };
+  G.armies.push(A);
+  G.armySel=A.id;
+  log(P.nm+'에서 '+num(men)+'을 일으켜 군을 세웠다.');
+  fxPop(P.id,'출정','#e0bd76'); snd('levy');
+  if(G.saga) G.saga.did.chul=(G.saga.did.chul||0)+1;
+  return A;
+}
+function disbandArmy(A){
+  const P=G.provs[A.at];
+  if(P && P.nat===A.nat){ P.army+=A.men; log(P.nm+'에서 군을 풀었다.'); }
+  else log('군이 흩어졌다.');
+  G.armies=G.armies.filter(x=>x!==A);
+  if(G.armySel===A.id) G.armySel=null;
+}
+/* 갈 수 있는 곳 — 맞닿은 고을 하나 */
+function canGo(A, id){
+  const P=G.provs[A.at]; if(!P) return false;
+  return P.adj.has(id);
+}
+function orderMove(A, id){
+  if(!canGo(A,id)) return false;
+  A.dest=id; A.mv=0;
+  const 느림 = SEA_LINK[A.at+'|'+id] || (G.provs[id] && G.provs[id].t==='mtn');
+  A.need = 느림? 2 : 1;
+  return true;
+}
+/* 군의 힘 — 고을이 치던 것과 같은 셈을 쓴다 */
+function armyAtk(A){
+  const P=G.provs[A.at];
+  const U=unitOf(P && P.nat===A.nat? P : null);
+  const gov=P? officialAt(P.id) : null;
+  const mil=gov&&P.nat===A.nat? 1+gov.mil/160 : 1;
+  return A.men * U.atk * mil * (A.nat==='kor'? mods().atk : 1) * (1+techOf(A.nat)/220);
+}
+/* 고을이 버티는 힘 — 성곽과 지형과 그 자리의 수비병 */
+function provDef(P, 미는이){
+  const T=TERR[P.t], V=unitOf(P);
+  let 원군=0;
+  [...P.adj].forEach(id=>{ const q=G.provs[id];
+    if(q && q.nat===P.nat && q.id!==(미는이&&미는이.at)) 원군 += q.army*0.20; });
+  // 그 고을에 선 우군 야전군도 성을 지킨다
+  const 지킴=armiesAt(P.id).filter(a=>a.nat===P.nat).reduce((s,a)=>s+a.men,0);
+  return (P.army+원군+지킴)*T.def*(1+P.fort*0.16)*V.def
+         *(P.nat==='kor'? mods().defKor : 1)*(1+techOf(P.nat)/220);
+}
+/* 야전 — 같은 고을에서 마주친 두 군 */
+function fieldBattle(A, B2){
+  const a=armyAtk(A), b=armyAtk(B2);
+  // 그 고을의 임자가 지형의 덕을 본다
+  const P=G.provs[A.at];
+  const aT = P && P.nat===A.nat? TERR[P.t].def : 1;
+  const bT = P && P.nat===B2.nat? TERR[P.t].def : 1;
+  const p=winChance(a*aT, b*bT);
+  const A이김=Math.random()<p;
+  const 이긴=A이김?A:B2, 진=A이김?B2:A;
+  const 이긴손=Math.round(이긴.men*clamp(0.10+(1-(A이김?p:1-p))*0.5,0.08,0.55));
+  이긴.men=Math.max(0,이긴.men-이긴손);
+  const at=fxAt(A.at);
+  if(at){
+    fx({ kind:'clash', life:1.2, at, won:true, shake:0.8, snd:'battle' });
+    fx({ kind:'float', delay:0.3, life:2.0, at:{x:at.x,y:at.y-10},
+         text:'야전 — '+natName(이긴.nat)+' 이김', col:'#f0e2be', size:13, rise:22 });
+  }
+  log('['+ (G.provs[A.at]? G.provs[A.at].nm : '') +'] 야전. '
+      + natName(이긴.nat)+'이 이겼다. ('+natName(진.nat)+'의 '+num(진.men)+' 흩어짐)');
+  G.armies=G.armies.filter(x=>x!==진);
+  if(G.armySel===진.id) G.armySel=null;
+  if(진.nat==='kor'){ G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100); snd('lose'); }
+  if(G.saga) G.saga.fields=(G.saga.fields||0)+1;
+  return 이긴;
+}
+/* 포위 — 한 해치 */
+function siegeTick(A, B){
+  const P=G.provs[A.at]; if(!P) return;
+  const 수비=provDef(P, A);
+  const 밀기=armyAtk(A);
+  // 성이 높을수록 오래 걸린다. 힘이 모자라면 아예 못 민다.
+  const 걸음=clamp(28*(밀기/Math.max(1,수비)) - P.fort*2.2, -6, 46);
+  A.siege=clamp(A.siege+걸음, 0, 100);
+  // 포위된 고을은 시끄러워지고 수비병이 준다
+  P.unrest=clamp(P.unrest+2.2,0,100);
+  P.army=Math.round(P.army*0.96);
+  const at=fxAt(A.at);
+  if(A.siege>=100){
+    const 옛=P.nat;
+    P.nat=A.nat; P.unrest=clamp(P.unrest+40,0,100); P.assim=0;
+    P.army=Math.round(A.men*0.22); A.men=Math.round(A.men*0.82); A.siege=0;
+    G.plateDirty=true; ROUTEKEY='';
+    fxFlip(P, 옛, P.nm+' 함락', A.nat==='kor'? '#f0e2be':'#c4534a');
+    shake(0.9); snd(A.nat==='kor'? 'win':'lose');
+    log(natName(A.nat)+'이 '+P.nm+을를(P.nm)+' 함락시켰다.');
+    if(B) B.events.push(P.nm+(A.nat==='kor'? ' 함락':' 잃음'));
+    if(A.nat==='kor'){
+      G.legit=clamp(G.legit+2,0,100); sagaDo('takeWin', P.nm);
+      if(G.reign) G.reign.얻음++;
+    } else if(옛==='kor'){
+      G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
+      G.legit=clamp(G.legit-5,0,100);
+      sagaDo('lost', P.nm); if(G.reign) G.reign.뺏김++;
+      if(P.cap){ log('도읍이 넘어갔다.'); if(G.reign) G.reign.도읍잃음=1; }
+    }
+  } else if(at && A.nat==='kor' && A.siege>0){
+    // 포위가 얼마나 갔는지는 지도에서 고리로 보인다 (drawArmies)
+  }
+}
+/* 한 해 — 움직이고, 부딪히고, 줄어든다 */
+function armyTurn(B){
+  if(!G.armies) G.armies=[];
+  const M=mods();
+  // ① 움직임
+  G.armies.forEach(A=>{
+    if(!A.dest) return;
+    A.mv++;
+    if(A.mv < (A.need||1)) return;
+    if(!G.provs[A.dest]){ A.dest=null; return; }
+    A.at=A.dest; A.dest=null; A.mv=0; A.siege=0;
+    if(A.nat==='kor'){
+      const P=G.provs[A.at];
+      if(P && DIP_NATS.includes(P.nat)) declareWar(P.nat, true);
+    }
+  });
+  // ② 야전 — 한 고을에 두 나라의 군이 있으면
+  let 안전=0;
+  while(안전++<40){
+    let 붙음=null;
+    const 자리={};
+    for(const A of G.armies){
+      const 앞=자리[A.at];
+      if(앞 && 앞.nat!==A.nat){ 붙음=[앞,A]; break; }
+      if(!앞) 자리[A.at]=A;
+    }
+    if(!붙음) break;
+    fieldBattle(붙음[0], 붙음[1]);
+  }
+  // ③ 포위와 소모
+  G.armies.slice().forEach(A=>{
+    const P=G.provs[A.at];
+    if(!P){ return; }
+    if(P.nat!==A.nat){
+      // 우군 야전군이 그 고을에 함께 있으면 아직 포위가 아니다
+      siegeTick(A,B);
+    } else { A.siege=0; }
+    // 소모 — 남의 땅에서는 빨리 줄어든다
+    const 밖 = !P || P.nat!==A.nat;
+    A.men=Math.round(A.men*(밖? 0.93 : 0.985));
+    if(A.men<400){
+      log(natName(A.nat)+'의 군이 흩어졌다.');
+      G.armies=G.armies.filter(x=>x!==A);
+      if(G.armySel===A.id) G.armySel=null;
+    }
+  });
+  // ④ 군량 — 야전군은 곳간을 먹는다
+  const 우리군=armyList('kor').reduce((s,a)=>s+a.men,0);
+  B.upkeepField=Math.round(우리군*0.010*(1+G.era*0.3));
+  G.nations.kor.gold=Math.max(0, G.nations.kor.gold-B.upkeepField);
+  B.fieldMen=우리군;
 }
 
 function warOdds(target){
@@ -2702,6 +2885,28 @@ function advice(){
     else if(d.rel<-30) 더(62, natName(k)+'과의 사이가 '+Math.round(d.rel),
       '사이가 나쁘면 먼저 물린다. 사신을 보내 두는 편이 싸게 먹힌다.', ()=>{ G.tab='외교'; });
   });
+
+  /* 판 위의 군 — 세워 두고 잊으면 그 자리에서 녹는다 */
+  const 우리군=armyList('kor');
+  const 멈춘=우리군.filter(a=>!a.dest && G.provs[a.at] && G.provs[a.at].nat==='kor');
+  if(멈춘.length) 더(70, '군 '+멈춘.length+'이 멈춰 서 있다',
+    '판 위의 군은 해마다 줄어들고 군량을 먹는다. 갈 곳을 정하거나 풀어서 수비병으로 되돌린다.',
+    ()=>{ G.armySel=멈춘[0].id; G.sel=멈춘[0].at; G.mapFocus='korea'; });
+  const 포위중=우리군.filter(a=>a.siege>0);
+  if(포위중.length){
+    const A=포위중.sort((a,b)=>b.siege-a.siege)[0], q=G.provs[A.at];
+    더(64, (q?q.nm:'')+' 포위 '+Math.round(A.siege)+'%',
+      '성을 미는 중이다. 남은 군사 '+num(A.men)+'. 이웃 고을에서 군을 더 보내면 빨라진다.',
+      ()=>{ G.armySel=A.id; G.sel=A.at; });
+  }
+  const 밀림=(G.armies||[]).filter(a=>a.nat!=='kor' && G.provs[a.at] && G.provs[a.at].nat==='kor');
+  if(밀림.length){
+    const A=밀림.sort((a,b)=>b.siege-a.siege)[0], q=G.provs[A.at];
+    더(96, (q?q.nm:'')+(q?이가(q.nm):'')+' 포위당했다 '+Math.round(A.siege)+'%',
+      natName(A.nat)+'의 군 '+num(A.men)+'이 성을 밀고 있다. '
+      + '군을 보내 야전으로 걷어 내거나, 축성과 모병으로 버틴다.',
+      ()=>{ G.sel=A.at; G.mapFocus='korea'; });
+  }
 
   /* 다가오는 일 — 가까울수록 급해진다. 가장 위에 서야 하는 줄이다. */
   const 조짐=omenNow();
@@ -4318,6 +4523,138 @@ function drawRoutes(g, z){
   g.restore();
 }
 
+/* ── 군을 부리는 띠 ──
+   아래 판에는 자리가 없다(수치 줄과 명령 줄이 이미 꽉 찼다). 군은 지도의 것이므로
+   지도 안쪽 아래에 띠로 붙인다. 세로 판에서도 같은 자리다. */
+function drawArmyBar(g){
+  const 우리=armyList('kor'); if(!우리.length) return;
+  const A=armySel();
+  const h=A? 30 : 26;
+  const w=Math.min(LAY.phone? VIEW.w-12 : 430, VIEW.w-16);
+  const x=VIEW.x+8, y=VIEW.y+VIEW.h-h-8;
+  g.fillStyle='rgba(14,16,20,.90)'; g.fillRect(x,y,w,h);
+  g.strokeStyle='rgba(190,158,96,.35)'; g.lineWidth=1; g.strokeRect(x+.5,y+.5,w-1,h-1);
+  if(!A){
+    g.fillStyle='rgba(150,145,135,.85)'; g.font='11px serif';
+    g.fillText('판 위의 군 '+우리.length+'  ·  깃발을 눌러 부린다', x+10, y+h/2+4);
+    // 첫 군으로 바로 간다
+    hz(x,y,w,h, ()=>{ G.armySel=우리[0].id; G.sel=우리[0].at; },
+       '군을 고르면 맞닿은 고을이 빛난다. 그 고을을 누르면 그리로 간다.');
+    return;
+  }
+  const P=G.provs[A.at];
+  g.fillStyle=NATIONS.kor.col; g.fillRect(x+4, y+5, 3, h-10);
+  g.fillStyle='#e8e1d1'; g.font='12px serif';
+  g.fillText('우리 군 '+num(A.men)+(P? '  ·  '+P.nm : ''), x+13, y+h/2+4);
+  const 상태 = A.dest&&G.provs[A.dest]? ('→ '+G.provs[A.dest].nm+'  '+((A.need||1)-A.mv)+'해')
+             : A.siege>0? ('포위 '+Math.round(A.siege)+'%')
+             : (P&&P.nat!=='kor')? '성 앞에 섰다' : '멈춰 있다';
+  g.fillStyle= A.siege>0? '#e0bd76' : 'rgba(150,145,135,.85)';
+  g.font='11px serif'; g.textAlign='right';
+  const bw=LAY.phone? 62 : 74;
+  g.fillText(상태, x+w-bw*2-16, y+h/2+4); g.textAlign='left';
+  btn(g, x+w-bw*2-10, y+4, bw-4, h-8, A.dest? '멈춘다':'놓는다', false, ()=>{
+    if(A.dest){ A.dest=null; A.mv=0; } else { G.armySel=null; }
+  });
+  btn(g, x+w-bw-6, y+4, bw-4, h-8, '군을 푼다', false, ()=>{
+    확인('군을 푼다', num(A.men)+'을 '+(P?P.nm:'')+'의 수비병으로 되돌린다.', '푼다',
+         ()=>{ disbandArmy(A); });
+  });
+}
+
+/* ── 군을 그린다 — 마을 위, 이름표 아래 ── */
+function drawArmies(g, z){
+  if(!G.armies || !G.armies.length) return;
+  const inv=1/z;
+  const A2=id=>{ const R=MAPVIS.regions[id]; return R? R.anchor : null; };
+  g.save(); g.translate(CFG.GX,CFG.GY);
+  /* 가는 길 — 어디로 향하는지 화살로 */
+  G.armies.forEach(A=>{
+    if(!A.dest) return;
+    const p=A2(A.at), q=A2(A.dest); if(!p||!q) return;
+    const 우리=A.nat==='kor';
+    g.strokeStyle= 우리? 'rgba(240,226,190,.75)' : 'rgba(196,83,74,.6)';
+    g.lineWidth=1.4*inv; g.setLineDash([4*inv,3*inv]);
+    g.beginPath(); g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); g.stroke();
+    g.setLineDash([]);
+    const dx=q[0]-p[0], dy=q[1]-p[1], L=Math.hypot(dx,dy)||1;
+    const hx=q[0]-dx/L*4, hy=q[1]-dy/L*4, nx=-dy/L, ny=dx/L;
+    g.fillStyle= 우리? 'rgba(240,226,190,.85)' : 'rgba(196,83,74,.75)';
+    g.beginPath();
+    g.moveTo(q[0]-dx/L*1.5, q[1]-dy/L*1.5);
+    g.lineTo(hx+nx*2.2*inv*1.4, hy+ny*2.2*inv*1.4);
+    g.lineTo(hx-nx*2.2*inv*1.4, hy-ny*2.2*inv*1.4);
+    g.closePath(); g.fill();
+  });
+  /* 말 — 고을마다 나라별로 한 무더기씩.
+     화면에서 늘 같은 크기로 보이게 inv 를 곱한다. 처음에 7px 로 잡았더니
+     무엇이 서 있는지 알아볼 수가 없었다 — 판 위의 말은 읽혀야 말이다. */
+  const 자리={};
+  G.armies.forEach(A=>{ (자리[A.at]=자리[A.at]||[]).push(A); });
+  Object.entries(자리).forEach(([id,list])=>{
+    const a=A2(id); if(!a) return;
+    list.forEach((A,i)=>{
+      const 우리=A.nat==='kor', 고름=G.armySel===A.id;
+      const col=NATIONS[A.nat].col;
+      const u2=13*inv;                                   // 말 한 개의 크기
+      const x=a[0]+(i-(list.length-1)/2)*u2*1.35, y=a[1]-u2*0.9;
+      // 포위 고리 — 얼마나 갔는지. 말보다 먼저 깔린다.
+      if(A.siege>0){
+        g.strokeStyle='rgba(20,17,14,.8)'; g.lineWidth=3.4*inv;
+        g.beginPath(); g.arc(x, y, u2*1.05, 0, 7); g.stroke();
+        g.strokeStyle= 우리? '#e0bd76' : '#c4534a'; g.lineWidth=3.0*inv;
+        g.beginPath(); g.arc(x, y, u2*1.05, -Math.PI/2, -Math.PI/2+Math.PI*2*(A.siege/100)); g.stroke();
+      }
+      // 바탕 — 어디에 있든 읽히게
+      g.fillStyle='rgba(16,18,22,.82)';
+      g.beginPath(); g.arc(x, y, u2*0.72, 0, 7); g.fill();
+      g.strokeStyle= 고름? '#fff1bc' : 'rgba(20,17,14,.9)';
+      g.lineWidth=(고름?2.2:1.2)*inv;
+      g.beginPath(); g.arc(x, y, u2*0.72, 0, 7); g.stroke();
+      // 깃대와 기
+      const 흔=Math.sin(NOW*2.4+A.id)*0.16;
+      g.strokeStyle='rgba(226,220,204,.9)'; g.lineWidth=1.5*inv;
+      g.beginPath(); g.moveTo(x-u2*0.26, y+u2*0.42); g.lineTo(x-u2*0.26, y-u2*0.46); g.stroke();
+      g.beginPath();
+      g.moveTo(x-u2*0.26, y-u2*0.46);
+      g.quadraticCurveTo(x+u2*0.24, y-u2*0.46+흔*u2, x+u2*0.50, y-u2*0.12);
+      g.lineTo(x-u2*0.26, y-u2*0.02); g.closePath();
+      g.fillStyle=col; g.fill();
+      g.strokeStyle='rgba(20,17,14,.75)'; g.lineWidth=0.8*inv; g.stroke();
+      // 사람 수 — 말 아래에 패쪽으로
+      if(z>=1.4){
+        const 글=numS(A.men);
+        g.font=(9*inv)+'px serif'; g.textAlign='center';
+        const tw2=g.measureText(글).width+7*inv;
+        g.fillStyle='rgba(16,18,22,.88)';
+        g.fillRect(x-tw2/2, y+u2*0.78, tw2, 11*inv);
+        g.strokeStyle= 우리? 'rgba(224,189,118,.5)':'rgba(196,83,74,.5)';
+        g.lineWidth=0.9*inv; g.strokeRect(x-tw2/2, y+u2*0.78, tw2, 11*inv);
+        g.fillStyle= 우리? '#f2ead7' : '#e8c7c2';
+        g.fillText(글, x, y+u2*0.78+8.4*inv);
+        g.textAlign='left';
+      }
+    });
+  });
+  g.restore();
+  /* 누르는 자리는 화면 좌표로 따로 등록한다 — 지도 변환 밖에서 */
+  Object.entries(자리).forEach(([id,list])=>{
+    const a=A2(id); if(!a) return;
+    list.forEach((A,i)=>{
+      const V=activeMapView();
+      const sx=VIEW.x+(a[0]+(i-(list.length-1)/2)*13*1.35/z-V.x)*z;
+      const sy=VIEW.y+(a[1]-13*0.9/z-V.y)*z;
+      if(sx<VIEW.x||sx>VIEW.x+VIEW.w||sy<VIEW.y||sy>VIEW.y+VIEW.h) return;
+      hz(sx-13, sy-14, 26, 30, ()=>{
+        if(A.nat==='kor'){ G.armySel=(G.armySel===A.id)? null : A.id; G.sel=A.at; snd('pick'); }
+        else { G.sel=A.at; snd('pick'); }
+      }, natName(A.nat)+'의 군 '+num(A.men)
+         +(A.dest&&G.provs[A.dest]? '  →  '+G.provs[A.dest].nm : '')
+         +(A.siege>0? '  ·  포위 '+Math.round(A.siege)+'%' : ''));
+    });
+  });
+}
+
 function drawCountryLabels(g){
   const political=G.mapMode==='political';
   const labels={chn:{x:350,y:248,size:58,angle:-.04},kor:{x:642,y:235,size:34,angle:1.08},jpn:{x:758,y:238,size:27,angle:-.58}};
@@ -4370,6 +4707,19 @@ function drawMap(g){
     g.fillStyle='rgba(157,59,50,'+(P.unrest/100*.42)+')'; g.fill(MAPVIS.rect[P.id],'evenodd');
   });
   if(G.sel&&G.provs[G.sel]){ g.fillStyle='rgba(248,232,172,.11)'; g.fill(MAPVIS.rect[G.sel],'evenodd'); }
+  {
+    // 고른 군이 갈 수 있는 자리 — 누를 곳이 어디인지 보여야 한다
+    const A=armySel();
+    if(A && G.provs[A.at]){
+      const 숨=0.10+Math.sin(NOW*3.2)*0.05;
+      [...G.provs[A.at].adj].forEach(id=>{
+        const q=G.provs[id]; if(!q) return;
+        g.fillStyle= q.nat==='kor'? 'rgba(143,168,106,'+Math.max(0,숨).toFixed(3)+')'
+                                  : 'rgba(196,83,74,'+Math.max(0,숨).toFixed(3)+')';
+        g.fill(MAPVIS.rect[id],'evenodd');
+      });
+    }
+  }
   if(G.hover&&G.provs[G.hover]&&G.hover!==G.sel){ g.fillStyle='rgba(244,239,220,.08)'; g.fill(MAPVIS.rect[G.hover],'evenodd'); }
   g.restore();
 
@@ -4468,12 +4818,31 @@ function drawMap(g){
     g.textAlign='left';
   });
 
+  /* 군은 이름표 위에 선다 — 판 위에서 가장 먼저 읽혀야 하는 것이다 */
+  drawArmies(g, activeMapView().zoom);
   if(FX.length) drawFX(g, inv);
   g.restore();
 
-  hz(VIEW.x,VIEW.y,MW,MH,()=>{ const id=provinceAtPoint(Mouse.x,Mouse.y); if(id){ G.sel=id; snd('pick'); } });
+  hz(VIEW.x,VIEW.y,MW,MH,()=>{
+    const id=provinceAtPoint(Mouse.x,Mouse.y); if(!id) return;
+    /* 군을 고른 채로 맞닿은 고을을 누르면 그리로 보낸다 —
+       고르고 나서 또 어디를 눌러야 하는지 묻지 않는다. */
+    const A=armySel();
+    if(A && A.at!==id && canGo(A,id)){
+      orderMove(A,id);
+      const q=G.provs[id];
+      log(natName('kor')+'의 군에 '+q.nm+(A.need>1? ' 쪽으로 두 해' : ' 쪽으로')+' 가라 일렀다.');
+      snd('click'); G.sel=id; return;
+    }
+    G.sel=id;
+    // 그 고을에 우리 군이 있으면 함께 고른다
+    const 여기=armiesAt(id).filter(a=>a.nat==='kor');
+    G.armySel = 여기.length? 여기[0].id : null;
+    snd('pick');
+  });
   drawMapModeControl(g);
   drawMapFocusControl(g);
+  drawArmyBar(g);
   g.strokeStyle='rgba(224,189,118,.28)'; g.lineWidth=1; g.strokeRect(VIEW.x+.5,VIEW.y+.5,MW-1,MH-1);
 
   /* 세력 표는 단추 앞에서 멈춘다.
@@ -5253,6 +5622,7 @@ function drawReport(g){
       + (B.interest? ' · 이자 '+num(B.interest) : ''));
   row('세출', '−'+num(난), '#c4534a',
       '군 '+num(B.upkeepArmy)+' · 녹봉 '+num(B.upkeepPay)+' · 성곽 '+num(B.upkeepFort)
+      +(B.upkeepField? ' · 야전군 '+num(B.upkeepField) : '')
       + (B.tribute? ' · 세폐 '+num(B.tribute) : '')
       + (B.polDrain? ' · 정책 '+num(B.polDrain) : ''));
   const 순=N.gold-B.gold0;
@@ -5780,7 +6150,7 @@ function packSave(){
     evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
     res:G.res, dip:G.dip, cj:G.cj, byeol:G.byeol, saheWait:G.saheWait, tab:G.tab, sel:G.sel, view:G.view,
     king:G.king, gen:G.gen, genN:G.genN, edict:G.edict, reign:G.reign, reigns:G.reigns, saga:G.saga,
-    pendingReign:G.pendingReign,
+    pendingReign:G.pendingReign, armies:G.armies, armyId:ARMY_ID,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
     farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0,
@@ -5836,6 +6206,8 @@ function loadGame(slot){
                         pop0:G.nations.kor.pop, stab:0, 해:0, 전쟁:0, 사화:0, 뺏김:0, 얻음:0 };
     G.reigns=d.reigns||[]; G.pendingReign=d.pendingReign||null;
     G.saga=Object.assign(newSaga(), d.saga||{});
+    G.armies=d.armies||[]; G.armySel=null;
+    ARMY_ID=d.armyId || (G.armies.reduce((m,a)=>Math.max(m,a.id),0)+1);
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
     if(d.sel && d.sel in G.provs) G.sel=d.sel;
