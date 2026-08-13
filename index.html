@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2','1.1.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -1301,7 +1301,65 @@ const RECUR=[
  { id:'hwagi', era:[1,3], t:'화기를 어찌 다룰까', b:'새 화약 무기를 얻었다. 다루는 법을 아는 이가 적고, 흘러 나가면 도로 우리를 겨눈다.',
    c:[{t:'널리 가르쳐 군에 퍼뜨린다',r:'군이 강해졌다. 만드는 법이 밖으로 새어 나갔다.',e:{army:10,tech:6,relC:-5}},
       {t:'몇 부대만 갖게 하고 감춘다',r:'비밀은 지켰다. 퍼지는 데 오래 걸렸다.',e:{army:4,res:25}},
-      {t:'만드는 법부터 적어 남긴다',r:'당장은 늘지 않았으나 뒷사람이 이어받았다.',e:{res:55,tech:4}}]}
+      {t:'만드는 법부터 적어 남긴다',r:'당장은 늘지 않았으나 뒷사람이 이어받았다.',e:{res:55,tech:4}}]},
+ /* ── 시대별로 더한 것(v1.1.0) — 같은 스무 개가 육백 년을 돌면 물음이 아니라 소음이다 ── */
+ { id:'tongsin', era:[1,3], t:'통신사를 보낼까', b:'바다 건너에서 사신을 청한다. 길이 멀고 값이 크지만, 오간 이들이 보고 듣는 것 또한 크다.',
+   c:[{t:'크게 꾸려 보낸다',r:'문물이 오가고 사이가 두터워졌다. 행차의 값이 만만치 않았다.',e:{relJ:14,res:30,gold:-12}},
+      {t:'작게 꾸려 예만 갖춘다',r:'사이는 상했지만 값은 아꼈다. 저쪽이 서운해했다.',e:{relJ:4,gold:-4}},
+      {t:'보내지 않는다',r:'값은 아꼈으나 바다 건너의 사정에 어두워졌다.',e:{relJ:-8,gold:3,tech:-2}}]},
+ { id:'nobi', era:[2,4], t:'종의 문서', b:'속량전을 내고 양인이 되겠다는 종이 줄을 선다. 주인들은 조정이 남의 재산을 축낸다 한다.',
+   c:[{t:'속량의 길을 넓게 연다',r:'양인이 늘어 세와 군역의 밑이 두터워졌다. 큰 집안들이 등을 돌렸다.',e:{stab:6,legitimacy:5,gold:-6}},
+      {t:'관노비만 풀어 준다',r:'조정이 먼저 본을 보였다. 사노비는 그대로였다.',e:{legitimacy:6,gold:-4,stab:2}},
+      {t:'문서대로 둔다',r:'주인들은 흡족해했다. 도망하는 종이 해마다 늘었다.',e:{stab:-5,gold:4,legitimacy:-4}}]},
+ { id:'seohak', era:[2,3], t:'서쪽에서 온 가르침', b:'청에 다녀온 이들이 새 학문과 함께 낯선 가르침을 들여왔다. 조상의 제사를 마다한다는 말에 조정이 술렁인다.',
+   c:[{t:'학문은 받고 가르침은 금한다',r:'천문과 역법이 들어왔다. 금령은 지켜지지 않아 몰래 믿는 이가 늘었다.',e:{res:45,tech:4,stab:-4}},
+      {t:'엄히 금하고 벌한다',r:'조정의 명분은 섰다. 죽은 이들의 이름이 오래 남았다.',e:{stab:4,legitimacy:-8,tech:-3}},
+      {t:'믿는 것을 내버려 둔다',r:'다툼은 없었다. 유생들이 조정이 도를 버렸다며 상소를 올렸다.',e:{stab:-6,legitimacy:-3,res:25}}]},
+ { id:'hwangok', era:[2,5], t:'환곡 장부가 어긋난다', b:'봄에 빌려 준 곡식의 장부와 곳간이 맞지 않는다. 아전은 쥐가 먹었다 하고, 백성은 아전이 먹었다 한다.',
+   c:[{t:'팔도의 장부를 통째로 조사한다',r:'새던 구멍이 여럿 막혔다. 조사에 든 값이 크고 아전들이 일손을 놓았다.',e:{gold:8,stab:-5,legitimacy:4}},
+      {t:'곳간을 채우고 덮는다',r:'당장의 굶주림은 막았다. 같은 구멍으로 이듬해에도 샜다.',e:{food:8,gold:-9}},
+      {t:'환곡을 줄이고 마을이 스스로 굴리게 한다',r:'원망이 줄었다. 흉년에 조정이 쥔 곡식도 줄었다.',e:{stab:7,food:-7,legitimacy:3}}]},
+ { id:'keunmul', era:[0,6], t:'큰물이 났다', b:'장마가 길어 강이 넘쳤다. 논이 잠기고 다리가 끊겼다.',
+   c:[{t:'곳간을 열고 부역을 면해 준다',r:'물이 빠진 자리에 사람들이 돌아왔다.',e:{gold:-10,food:-8,stab:8}},
+      {t:'둑을 다시 쌓고 물길을 돌린다',r:'값은 컸으나 같은 물이 다시 넘치지 않았다.',e:{gold:-14,res:25,stab:3}},
+      {t:'하늘의 일이라 이르고 제를 올린다',r:'제문은 훌륭했다. 잠긴 논은 그대로였다.',e:{legitimacy:3,stab:-7,food:-6}}]},
+ { id:'byeolgi', era:[3,3], t:'신식 군대와 구식 군대', b:'새로 뽑은 군대는 신식 총을 들고 녹을 제때 받는다. 옛 군영의 군졸은 열세 달 치 녹이 밀렸다.',
+   c:[{t:'밀린 녹을 먼저 다 치른다',r:'옛 군영이 가라앉았다. 국고가 크게 상했다.',e:{gold:-14,stab:8,army:4}},
+      {t:'옛 군영을 줄여 신식으로 합친다',r:'군제는 정리되었으나 쫓겨난 군졸들이 거리에 남았다.',e:{army:8,gold:-6,stab:-8}},
+      {t:'그대로 둔다',r:'밀린 녹에 겨가 섞여 나가던 날, 군졸들이 창고를 부수었다.',e:{stab:-12,army:-5,legitimacy:-5}}]},
+ { id:'sinmun', era:[3,5], t:'신문을 낼까', b:'활자와 윤전기가 들어왔다. 나라 안팎의 일을 백성이 읽게 하자는 말과, 조정의 일이 저자에 오르내리게 된다는 말이 맞선다.',
+   c:[{t:'낼 수 있게 허한다',r:'읽는 이가 늘고 바깥소식이 빨라졌다. 조정을 꾸짖는 글도 실렸다.',e:{res:40,tech:4,legitimacy:-4,stab:-3}},
+      {t:'관보만 내게 한다',r:'조정의 말만 실렸다. 아무도 믿지 않았다.',e:{stab:2,legitimacy:-3,tech:1}},
+      {t:'금한다',r:'활자는 창고에 들었다. 소문이 신문 노릇을 했다.',e:{stab:-4,tech:-3}}]},
+ { id:'danbal', era:[3,4], t:'상투를 자르라 한다', b:'위생과 편리를 내세워 머리를 깎으라는 영이 내렸다. 신체발부는 부모에게 받은 것이라며 통곡하는 소리가 팔도에 가득하다.',
+   c:[{t:'영을 거둔다',r:'통곡이 가라앉았다. 개혁이 굼뜨다는 말을 들었다.',e:{stab:8,tech:-3,legitimacy:3}},
+      {t:'관리부터 깎고 백성은 천천히',r:'본을 보이니 따르는 이가 조금씩 늘었다.',e:{tech:3,stab:-2,legitimacy:2}},
+      {t:'영을 밀어붙인다',r:'길에서 상투를 잘랐다. 의병이 일어나는 고을이 나왔다.',e:{tech:5,stab:-12,legitimacy:-8}}]},
+ { id:'jingbal', era:[4,4], t:'사람을 내놓으라 한다', b:'전쟁이 커지자 광산과 공장으로 사람을 내놓으라는 문서가 고을마다 내려왔다. 할당을 채우지 못하면 관리가 책을 잡힌다.',
+   c:[{t:'문서를 늦게 돌리고 명단을 흘린다',r:'몸을 피한 이가 여럿이었다. 들킨 관리가 끌려갔다.',e:{stab:5,legitimacy:6,gold:-6}},
+      {t:'할당을 채운다',r:'책잡힐 일은 없었다. 마을마다 빈집이 늘었다.',e:{gold:4,stab:-10,legitimacy:-9}},
+      {t:'돈으로 대신 메운다',r:'사람은 덜 갔으나 그 돈이 백성에게서 나왔다.',e:{gold:-12,stab:-3,legitimacy:2}}]},
+ { id:'hangeul2', era:[4,4], t:'말과 글을 지키는 사람들', b:'우리말 사용이 하나씩 금지된다. 사전을 엮던 이들이 원고를 나누어 감춘다.',
+   c:[{t:'원고를 몰래 옮기고 사람을 숨긴다',r:'원고가 살아남았다. 숨겨 준 이들이 대신 잡혀갔다.',e:{legitimacy:8,res:30,stab:-5}},
+      {t:'학교 밖 서당에서 가만히 가르친다',r:'아이들이 밤에 모여 글을 배웠다.',e:{res:40,stab:2,gold:-4}},
+      {t:'지금은 때가 아니라며 접는다',r:'무사했다. 다음 세대는 제 이름을 남의 글자로 먼저 배웠다.',e:{stab:3,legitimacy:-8,tech:-2}}]},
+ { id:'pabyeong', era:[6,6], t:'바다 건너 파병 요청', b:'동맹국이 먼 전쟁에 군대를 보내 달라 한다. 보내면 돈과 기술이 오고, 젊은이들이 간다.',
+   c:[{t:'전투 부대를 보낸다',r:'외화와 차관이 들어와 공장이 섰다. 돌아오지 못한 이들의 이름이 남았다.',e:{gold:16,tech:5,stab:-7,legitimacy:-4}},
+      {t:'공병과 의료진만 보낸다',r:'덜 벌었지만 덜 잃었다.',e:{gold:7,tech:3,stab:-2}},
+      {t:'거절한다',r:'젊은이들은 남았다. 동맹의 서운함이 여러 해 갔다.',e:{stab:3,gold:-5,relC:-4}}]},
+ { id:'nosa', era:[6,7], t:'공장이 멈췄다', b:'낮은 삯과 긴 노동에 지친 노동자들이 기계를 끄고 마당에 모였다. 납기가 코앞이다.',
+   c:[{t:'삯을 올리고 시간을 줄인다',r:'기계가 다시 돌았다. 물건값이 올라 수출이 주춤했다.',e:{stab:8,gold:-9}},
+      {t:'경찰을 불러 해산시킨다',r:'납기는 맞췄다. 이듬해 더 큰 파업이 왔다.',e:{gold:5,stab:-10,legitimacy:-6}},
+      {t:'노사가 마주 앉게 중재한다',r:'더디지만 판이 깨지지는 않았다. 양쪽 다 반쯤 불만이었다.',e:{stab:4,gold:-3,legitimacy:3}}]},
+ { id:'sudo2', era:[7,7], t:'서울이 무겁다', b:'사람과 돈과 대학이 모두 한 도시에 몰렸다. 집값이 치솟고 지방은 비어 간다.',
+   c:[{t:'행정 기능을 지방으로 옮긴다',r:'새 도시가 서고 길이 났다. 옮겨 간 이들의 불만과 남은 이들의 불만이 함께 났다.',e:{gold:-12,stab:4,tech:2}},
+      {t:'수도권에 집을 더 짓는다',r:'집값이 잠시 잡혔다. 몰림은 더 심해졌다.',e:{gold:-8,stab:3,legitimacy:-2}},
+      {t:'두고 본다',r:'집값이 다시 뛰었다. 아이 울음소리가 줄었다.',e:{stab:-6,legitimacy:-4}}]},
+ { id:'hallyu', era:[7,7], t:'바깥에서 우리 노래가 들린다', b:'우리말 노래와 영상이 바다 건너에서 인기다. 나라가 밀어 주자는 말과, 나라가 끼면 죽는다는 말이 맞선다.',
+   c:[{t:'판을 깔되 손은 대지 않는다',r:'만든 이들이 마음껏 만들었다. 세계가 들었다.',e:{gold:10,legitimacy:6,res:25}},
+      {t:'기금을 만들어 크게 민다',r:'양은 늘었다. 비슷비슷하다는 말도 늘었다.',e:{gold:4,tech:2,legitimacy:2}},
+      {t:'유행일 뿐이라 둔다',r:'유행은 유행으로 끝나지 않았는데, 판은 남의 나라에 깔렸다.',e:{gold:-4,legitimacy:-3}}]}
+
 ];
 
 /* 붕당 — 시대에 따라 이름이 바뀐다 */
@@ -1359,7 +1417,8 @@ function newGame(){
       evDone:{}, scores:[], legit:50, pendingEvent:null, evQueue:[], report:null, view:'nat',
       res:{ pt:0, done:{}, gain:0 }, dip:{}, byeol:0, saheWait:0,
       king:null, gen:null, genN:0, edict:null, reign:null, reigns:[], pendingReign:null,
-      saga:newSaga(), armies:[], armySel:null };
+      saga:newSaga(), armies:[], armySel:null,
+      works:{ done:{}, b:null } };
 
   /* 1) 해안선을 그린다 — 다각형 안쪽이 땅이다 */
   G.land=[];
@@ -1586,6 +1645,108 @@ function byeolPay(){
    설명에 적힌 것과 코드가 하는 일이 달라서는 안 된다.
    여기 한 곳에서만 계산하고, 나머지는 이 값을 가져다 쓴다.
    ---------------------------------------------------------- */
+/* ================================================================
+   나라의 큰 일 — 국책 사업
+   ----------------------------------------------------------------
+   중반이 되면 상한이 다 차고 국고만 쌓였다. 육만 전을 쥐고 할 일이
+   없었다 — 돈이 고이는 판은 셈이 죽은 판이다.
+
+   큰돈과 몇 해를 들여 하나씩 세우는 일을 둔다. 도감은 하나만 연다 —
+   한 번에 한 가지 큰 일이 조선의 속도였다. 다 세우면 그 효과는
+   판이 끝날 때까지 남고, 실록에도 한 줄 오른다.
+   ================================================================ */
+const WORKS=[
+ {id:'cheug', era:0, nm:'측우기와 자격루', cost:800, yrs:3,
+  good:'연구 +12% · 농지 산출 +4%',
+  b:'비를 재어 팔도에 두고, 물시계로 때를 알린다. 하늘을 재는 나라가 된다.'},
+ {id:'yukjin', era:0, nm:'사군육진 개척', cost:1100, yrs:5,
+  good:'북녘 네 고을 성곽 +1 · 지키는 힘 +5%',
+  b:'두 강가에 진을 세우고 백성을 옮겨 심는다. 국경이 강을 따라 선다.'},
+ {id:'sugun', era:1, nm:'수군 재건', cost:1000, yrs:3,
+  good:'수군 +20% · 치는 힘 +5%',
+  b:'불탄 조선소를 다시 세우고 판옥선을 짓는다. 바다가 다시 우리 것이 된다.'},
+ {id:'hwaseong', era:2, nm:'수원 화성', cost:1600, yrs:5,
+  good:'경기 성곽 +2 · 해마다 정통 +0.4',
+  b:'돌과 벽돌을 섞어 새 법식으로 성을 쌓는다. 거중기가 돌을 들어 올린다.'},
+ {id:'hwalja', era:2, nm:'주자소 확장', cost:1200, yrs:3,
+  good:'연구 +14%',
+  b:'쇠활자를 새로 부어 책을 찍어 낸다. 글이 궁 밖으로 퍼진다.'},
+ {id:'jeonsin', era:3, nm:'전신과 우정국', cost:1900, yrs:3,
+  good:'상업 +6% · 수출 +12%',
+  b:'전깃줄이 고을과 고을을 잇는다. 열흘 걸리던 소식이 한나절에 닿는다.'},
+ {id:'gyeongin', era:3, nm:'경인 철도', cost:2400, yrs:4,
+  good:'상업 +12%',
+  b:'쇠길 위로 물화가 달린다. 항구와 도읍이 한 몸이 된다.'},
+ {id:'minrip', era:4, nm:'민립대학 설립 운동', cost:1800, yrs:4,
+  good:'연구 +18% · 해마다 민심 +0.3',
+  b:'우리 손으로 대학을 세우자고 팔도에서 돈을 모은다. 배움이 곧 힘이다.'},
+ {id:'keunsajeon', era:5, nm:'큰사전 편찬', cost:1500, yrs:3,
+  good:'연구 +14% · 해마다 정통 +0.3',
+  b:'흩어진 말을 모아 사전을 엮는다. 말이 서야 나라가 선다.'},
+ {id:'gyeongbu', era:6, nm:'경부고속도로', cost:3200, yrs:4,
+  good:'상업 +14% · 농지 산출 +5%',
+  b:'서울과 부산을 하루에 잇는다. 온 나라가 하나의 장이 된다.'},
+ {id:'jecheol', era:6, nm:'종합제철소', cost:3800, yrs:5,
+  good:'상업 +16% · 군 유지비 -8%',
+  b:'바닷가 모래벌에 용광로를 세운다. 쇠가 나와야 배도 차도 나온다.'},
+ {id:'bandochip', era:7, nm:'반도체 단지', cost:5200, yrs:5,
+  good:'상업 +18% · 연구 +18%',
+  b:'모래에서 돌을 굽는다. 손톱만 한 조각이 배 한 척 값을 한다.'},
+ {id:'balsa', era:7, nm:'우주 발사체', cost:4600, yrs:4,
+  good:'해마다 기술 +1.5 · 정통 +0.5',
+  b:'우리 손으로 만든 불꽃을 우리 땅에서 쏘아 올린다.'}
+];
+/* 다 세운 큰 일의 효과 — mods() 에서 부른다 */
+function worksFx(m){
+  const D=(G.works&&G.works.done)||{};
+  if(D.cheug){ m.res*=1.12; m.food*=1.04; }
+  if(D.yukjin) m.defKor*=1.05;
+  if(D.sugun){ m.navy*=1.20; m.atk*=1.05; }
+  if(D.hwaseong) m.legit+=0.4;
+  if(D.hwalja) m.res*=1.14;
+  if(D.jeonsin){ m.trade*=1.06; m.exp*=1.12; }
+  if(D.gyeongin) m.trade*=1.12;
+  if(D.minrip){ m.res*=1.18; m.stab+=0.3; }
+  if(D.keunsajeon){ m.res*=1.14; m.legit+=0.3; }
+  if(D.gyeongbu){ m.trade*=1.14; m.food*=1.05; }
+  if(D.jecheol){ m.trade*=1.16; m.upArmy*=0.92; }
+  if(D.bandochip){ m.trade*=1.18; m.res*=1.18; }
+  if(D.balsa){ m.tech+=1.5; m.legit+=0.5; }
+}
+/* 짓기 시작한다 — 값은 미리 다 치른다. 도감은 하나뿐이다. */
+function startWork(W){
+  const N=G.nations.kor;
+  if(!G.works) G.works={done:{},b:null};
+  if(G.works.done[W.id]) { log('이미 이룬 일이오.'); return; }
+  if(G.works.b){ log('도감이 이미 다른 일을 맡고 있소.'); return; }
+  if(G.era<W.era){ log('아직 때가 아니오.'); return; }
+  if(N.gold<W.cost){ log('국고가 모자라오.'); return; }
+  N.gold-=W.cost;
+  G.works.b={ id:W.id, left:W.yrs };
+  log('「'+W.nm+'」'+을를(W.nm)+' 시작했다. '+W.yrs+'해가 걸린다.');
+  snd('build'); if(G.saga) (G.saga.mark=G.saga.mark||[]).push(G.year+' '+W.nm+' 착공');
+}
+/* 한 해 — endTurn 에서 부른다 */
+function worksTurn(B){
+  if(!G.works || !G.works.b) return;
+  const b=G.works.b; b.left--;
+  const W=WORKS.find(w=>w.id===b.id);
+  if(b.left<=0){
+    G.works.done[b.id]=G.year; G.works.b=null;
+    if(W){
+      // 한 번에 끝나는 몫 — 세운 그해에 손에 잡히는 것
+      if(W.id==='yukjin') ['pyab','pyan','hamb','hamn'].forEach(id=>{
+        const P=G.provs[id]; if(P&&P.nat==='kor'){ P.fort++; G.plateDirty=true; } });
+      if(W.id==='hwaseong'){ const P=G.provs['gyeo'];
+        if(P&&P.nat==='kor'){ P.fort+=2; G.plateDirty=true; } }
+      log('「'+W.nm+'」'+이가(W.nm)+' 이루어졌다. '+W.good);
+      if(B) B.events.push(W.nm+' 완공');
+      snd('era'); shake(0.3);
+      if(G.saga) (G.saga.mark=G.saga.mark||[]).push(G.year+' '+W.nm+' 완공');
+    }
+  } else if(W && B) B.events.push(W.nm+' — '+b.left+'해 남음');
+}
+
 const POL_CONFLICT=[['silhak','yechi'],['swaeguk','gaehwa'],['swaeguk','suchul'],
                     ['nongbon','suchul'],['toji','chagwan']];
 function polYears(id){ return G.polSince && G.polSince[id]!=null ? G.year-G.polSince[id] : 0; }
@@ -1641,6 +1802,9 @@ function mods(){
   if(T('seoyang')){ m.res*=1.30; m.tech+=1; }
   if(T('hakgyo')) { m.res*=1.30; m.pop*=1.05; }
   if(T('yeonso')) { m.res*=1.40; m.tech+=3; }
+
+  /* ── 나라의 큰 일 ── */
+  worksFx(m);
 
   /* ── 조약 ── */
   DIP_NATS.forEach(k=>{
@@ -2019,6 +2183,7 @@ function endTurn(){
   /* 치세의 장부 — 이 임금이 맡은 동안의 몫만 센다 */
   if(G.reign){ G.reign.해++; G.reign.stab += N.stab; }
   armyTurn(B);
+  worksTurn(B);
   reignTurn(B);
   dipTurn(B);
   cjTurn(B);
@@ -2052,7 +2217,7 @@ function endTurn(){
       if(r.when){ try{ if(!r.when()) return false; }catch(e){ return false; } }
       return true;
     });
-    if(후보.length && Math.random()<0.20){
+    if(후보.length && Math.random()<0.24){   // 판이 서른넷으로 늘어 조금 더 자주 온다
       const r=pick(후보);
       G.minorDone[r.id]=G.year;
       G.pendingEvent={ y:G.year, t:r.t, b:r.b, c:r.c };
@@ -3411,6 +3576,16 @@ function advice(){
   const 넘침=overExtend();
   if(넘침) 더(84, '점령지가 '+넘침+'곳 넘친다',
     '지고 갈 수 있는 것보다 많이 쥐면 해마다 민심과 정통이 깎인다. 수령을 두어 편입을 서두르거나 놓아준다.', null);
+
+  /* 나라의 큰 일 — 국고가 두터운데 도감이 논다 */
+  {
+    const WK=G.works||{done:{},b:null};
+    const 할것=WORKS.filter(W=>!WK.done[W.id] && G.era>=W.era);
+    if(!WK.b && 할것.length && N.gold>=할것[0].cost*1.3)
+      더(56, '국고가 두텁다 — 나라의 큰 일을 벌일 때다',
+        '「'+할것[0].nm+'」'+을를(할것[0].nm)+' 세울 수 있다. '+할것[0].good+'  정책 판에서 시작한다.',
+        ()=>{ G.tab='정책'; });
+  }
 
   /* 정책 자리 */
   if(G.policies.length<3){
@@ -5681,11 +5856,58 @@ function conflictOf(id){
 }
 function polName(id){ const p=POLICIES.find(x=>x.id===id); return p?p.nm:id; }
 function sidePolicy(g,x,y,w){
+  let yy=y;
+  /* ── 나라의 큰 일 ── */
   g.fillStyle='#e0bd76'; g.font='13px serif';
-  g.fillText('정책  ('+G.policies.length+' / 3)', x, y+12);
+  g.fillText('나라의 큰 일', x, yy+12);
   g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
-  g.fillText('세 가지까지. 얻는 것이 있으면 잃는 것도 있다.', x, y+28);
-  let yy=y+46;
+  g.fillText('큰돈과 몇 해를 들여 하나씩. 도감은 하나만 연다.', x, yy+28);
+  yy+=44;
+  const WK=G.works||{done:{},b:null};
+  if(WK.b){
+    const W=WORKS.find(w=>w.id===WK.b.id);
+    if(W){
+      g.fillStyle='rgba(190,150,80,.10)'; g.fillRect(x-4,yy-10,w+8,40);
+      g.fillStyle='#e0bd76'; g.font='12px serif';
+      g.fillText('짓는 중 — '+W.nm, x, yy+6);
+      g.fillStyle='rgba(150,145,135,.85)'; g.font='10px serif'; g.textAlign='right';
+      g.fillText(WK.b.left+'해 남음', x+w, yy+6); g.textAlign='left';
+      const 진행=(W.yrs-WK.b.left)/W.yrs;
+      bar(g, x, yy+14, w, 7, 진행, '#c9a24a');
+      yy+=42;
+    }
+  }
+  const 볼것=WORKS.filter(W=>!WK.done[W.id] && G.era>=W.era && (!WK.b||WK.b.id!==W.id));
+  const 이룬=WORKS.filter(W=>WK.done[W.id]);
+  볼것.forEach(W=>{
+    const 살수=!WK.b && G.nations.kor.gold>=W.cost && !G.ended;
+    const rowH=42;
+    const hov=inRect(Mouse,{x:x-4,y:yy-10,w:w+8,h:rowH});
+    if(hov&&살수){ g.fillStyle='rgba(190,150,80,.12)'; g.fillRect(x-4,yy-10,w+8,rowH); }
+    g.fillStyle= 살수? '#e8e1d1':'#8b8377'; g.font='12px serif';
+    g.fillText('○ '+W.nm, x, yy+6);
+    g.fillStyle= 살수? '#e0bd76':'rgba(120,115,105,.8)'; g.font='10px serif'; g.textAlign='right';
+    g.fillText(num(W.cost)+'전 · '+W.yrs+'해', x+w, yy+6); g.textAlign='left';
+    g.fillStyle='rgba(143,168,106,.9)'; g.font='10px serif';
+    g.fillText('＋ '+W.good, x+10, yy+21);
+    if(살수) hz(x-4,yy-10,w+8,rowH, ()=>{
+      확인(W.nm, W.b+'  '+num(W.cost)+'전이 들고 '+W.yrs+'해가 걸린다.', '시작한다', ()=>{ startWork(W); });
+    });
+    if(hov) G.tip = W.b + (살수? '' : (WK.b? '  · 도감이 이미 일을 맡고 있다' : '  · 국고가 모자란다'));
+    yy+=rowH;
+  });
+  if(이룬.length){
+    g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+    g.fillText('이룬 것 — '+이룬.map(W=>W.nm).join(' · '), x, yy+4);
+    yy+=18;
+  }
+  yy+=8; divider(g,x,yy-4,w); yy+=10;
+
+  g.fillStyle='#e0bd76'; g.font='13px serif';
+  g.fillText('정책  ('+G.policies.length+' / 3)', x, yy+12);
+  g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif';
+  g.fillText('세 가지까지. 얻는 것이 있으면 잃는 것도 있다.', x, yy+28);
+  yy+=46;
   POLICIES.forEach(P=>{
     const open=G.era>=P.era, on=G.policies.includes(P.id);
     const rowH= open? 54 : 20;
@@ -6904,7 +7126,7 @@ function packSave(){
     evDone:G.evDone, evQueue:G.evQueue, pendingEvent:G.pendingEvent,
     res:G.res, dip:G.dip, cj:G.cj, byeol:G.byeol, saheWait:G.saheWait, tab:G.tab, sel:G.sel, view:G.view,
     king:G.king, gen:G.gen, genN:G.genN, edict:G.edict, reign:G.reign, reigns:G.reigns, saga:G.saga,
-    pendingReign:G.pendingReign, armies:G.armies, armyId:ARMY_ID,
+    pendingReign:G.pendingReign, armies:G.armies, armyId:ARMY_ID, works:G.works,
     log:G.log.slice(0,60) };
   Object.entries(G.provs).forEach(([k,P])=>{ d.provs[k]={nat:P.nat,pop:P.pop,dev:P.dev,
     farm:P.farm,trade:P.trade,fort:P.fort,unrest:P.unrest,army:P.army,rebel:P.rebel||0,
@@ -6961,6 +7183,7 @@ function loadGame(slot){
     G.reigns=d.reigns||[]; G.pendingReign=d.pendingReign||null;
     G.saga=Object.assign(newSaga(), d.saga||{});
     G.armies=d.armies||[]; G.armySel=null;
+    G.works=d.works||{done:{},b:null};
     ARMY_ID=d.armyId || (G.armies.reduce((m,a)=>Math.max(m,a.id),0)+1);
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
