@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2','1.1.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2','1.1.0','1.2.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -2156,6 +2156,20 @@ function endTurn(){
   /* ── 시대 ── */
   const e=eraOf(G.year);
   if(e!==G.era){
+    /* 왕조가 갈리는 틈.
+       이웃의 이름이 시대와 함께 바뀐다 — 명이 저물고 청이 서고, 무로마치가
+       무너지고 도요토미가 선다. 그 사이 몇 해는 나라 안이 어지럽다.
+       역사에서 조선이 숨을 돌리던 때이자, 야심가라면 노리던 때다. */
+    DIP_NATS.forEach(k=>{
+      const N2=NATIONS[k];
+      const 옛이름=N2.names[Math.min(N2.names.length-1,G.era)];
+      const 새이름=N2.names[Math.min(N2.names.length-1,e)];
+      if(옛이름!==새이름){
+        G.nations[k].chaos=ri(6,10);
+        log(옛이름+이가(옛이름)+' 저물고 '+새이름+이가(새이름)+' 선다 — 그 땅이 한동안 어지럽다.');
+        B.events.push(새이름+' 개창 — 혼란 '+G.nations[k].chaos+'해');
+      }
+    });
     scoreEra(G.era);                                  // 지난 시대 성적을 매긴다
     G.era=e;
     const E=ERAS[e], nf=FACTION_SETS[Math.min(FACTION_SETS.length-1,e)];
@@ -2404,12 +2418,47 @@ function dipTurn(B){
 
     if(d.war){
       d.warYears++;
+      if(d.sueWait>0) d.sueWait--;
       // 오래 끄는 전쟁은 양쪽을 지치게 한다. 이쪽에서 먼저 손을 내밀 수도 있다.
       const 지침 = 0.06 + d.warYears*0.03;
-      if(d.warYears>=3 && Math.random()<지침){
-        d.war=false; d.warYears=0; d.truce=8; d.rel=clamp(d.rel+18,-100,100);
-        log(natName(k)+이가(natName(k))+' 싸움을 거두고 사신을 보내왔다.');
-        B.events.push(natName(k)+'과 휴전');
+      if(d.warYears>=3 && !d.sueWait && Math.random()<지침){
+        const sc=d.score||0, 나라=natName(k);
+        if(sc>=25){
+          /* 크게 지고 있는 쪽이 강화 사절을 보낸다 — 받을지는 조선이 정한다 */
+          const 상=500+Math.round(sc*12);
+          G.evQueue=(G.evQueue||[]).concat([{ y:G.year, t:나라+'의 강화 사절',
+            b:'싸움에 지친 '+나라+이가(나라)+' 예물을 실어 강화를 청해 왔다. 전세는 우리에게 있다 (+'+Math.round(sc)+').',
+            c:[
+            { t:'배상을 받고 싸움을 끝낸다', r:'배상 '+num(상)+'전이 들어오고 여덟 해의 휴전이 맺어졌다.',
+              e:{legitimacy:4}, fn:()=>{ G.nations.kor.gold+=상; d.war=false; d.warYears=0; d.truce=8; d.score=0;
+                d.rel=clamp(d.rel+20,-100,100); } },
+            { t:'관대하게, 값 없이 끝낸다', r:'예를 갖춘 화친에 저쪽이 깊이 감읍했다. 사이가 크게 풀렸다.',
+              e:{legitimacy:7}, fn:()=>{ d.war=false; d.warYears=0; d.truce=10; d.score=0;
+                d.rel=clamp(d.rel+38,-100,100); } },
+            { t:'물리치고 계속 싸운다', r:'사절이 빈손으로 돌아갔다. 싸움이 이어진다.',
+              e:{stab:-3}, fn:()=>{ d.sueWait=4; d.rel=clamp(d.rel-8,-100,100); } }]}]);
+          if(!G.pendingEvent) G.pendingEvent=G.evQueue.shift();
+          d.sueWait=3;                       // 한 번 보낸 사절은 몇 해 쉬어 간다
+          B.events.push(나라+' 강화 사절');
+        } else if(sc<=-25){
+          /* 이기고 있는 쪽이 요구를 얹어 온다 */
+          const 값=700+Math.round(-sc*10);
+          G.evQueue=(G.evQueue||[]).concat([{ y:G.year, t:나라+'의 요구',
+            b:'기세가 오른 '+나라+이가(나라)+' 배상을 요구하며 강화를 내밀었다. 전세는 저쪽에 있다 ('+Math.round(sc)+').',
+            c:[
+            { t:'배상을 치르고 싸움을 끝낸다', r:'국고 '+num(값)+'전이 나가고 싸움이 멎었다. 치욕은 오래 남는다.',
+              e:{legitimacy:-6}, fn:()=>{ G.nations.kor.gold=Math.max(0,G.nations.kor.gold-값);
+                d.war=false; d.warYears=0; d.truce=8; d.score=0; d.rel=clamp(d.rel+15,-100,100); } },
+            { t:'거절하고 버틴다', r:'요구를 물리쳤다. 싸움이 이어지고 저쪽의 칼끝이 날카로워졌다.',
+              e:{legitimacy:3}, fn:()=>{ d.sueWait=4; d.rel=clamp(d.rel-6,-100,100); } }]}]);
+          if(!G.pendingEvent) G.pendingEvent=G.evQueue.shift();
+          d.sueWait=3;
+          B.events.push(나라+'의 강화 요구');
+        } else {
+          d.war=false; d.warYears=0; d.truce=8; d.score=0; d.rel=clamp(d.rel+18,-100,100);
+          log(나라+이가(나라)+' 싸움을 거두고 사신을 보내왔다.');
+          B.events.push(나라+'과 휴전');
+        }
       }
     }
     /* 종이는 마음을 붙들지 못한다 */
@@ -2551,7 +2600,7 @@ function closeReign(B, 어떻게){
 /* 전쟁을 연다 — 우리가 치거나, 저쪽이 우리를 치거나 */
 function declareWar(k, 우리가){
   const d=dipOf(k); if(!d || d.war) return;
-  d.war=true; d.warYears=0; d.truce=0; snd('war'); shake(0.5);
+  d.war=true; d.warYears=0; d.truce=0; d.score=0; snd('war'); shake(0.5);
   if(G.reign) G.reign.전쟁++;
   if(G.saga){ G.saga.wars++; G.saga.warWith[k]=(G.saga.warWith[k]||0)+1; }
   d.rel=clamp(d.rel-45,-100,100);
@@ -2569,6 +2618,15 @@ function aiTurn(B){
   const M=mods();
   ['chn','jpn'].forEach(k=>{
     const N=G.nations[k], 내땅=natProvs(k);
+    /* 왕조 교체기 — 나라 안이 어지러워 밖을 볼 틈이 없다.
+       군사가 녹고 고을이 시끄럽고, 새 군을 내지 못한다. */
+    if(N.chaos>0){
+      N.chaos--;
+      내땅.forEach(p=>{ p.army=Math.round(p.army*0.93); p.unrest=clamp(p.unrest+4,0,100); });
+      if(N.chaos===0){ log(natName(k)+' 땅의 어지러움이 가라앉았다. 새 왕조가 자리를 잡았다.');
+        B.events.push(natName(k)+' 안정'); }
+      return;                                    // 이 해는 그것으로 끝 — 기르지도 물지도 못한다
+    }
     N.gold += 내땅.length*14 + 40;
     // 이웃도 논다. 가만히 두면 조선만 홀로 앞서 나가 견줄 것이 없어진다.
     N.tech = +(N.tech + 0.3 + 0.6*(내땅.length/14) + G.era*0.42).toFixed(1);
@@ -2988,6 +3046,20 @@ function disbandArmy(A){
   if(G.armySel===A.id) G.armySel=null;
 }
 /* 갈 수 있는 곳 — 맞닿은 고을 하나 */
+/* 전세 — 이 전쟁을 누가 이기고 있는가.
+   ----------------------------------------------------------------
+   여태 화친은 전세를 몰랐다. 스무 해를 이겨도 화친하려면 값을 치르고
+   정통을 깎였다 — 이긴 전쟁과 진 전쟁이 같은 값이었다.
+   야전과 함락이 전세에 쌓이고, 화친의 값이 전세를 따라 달라진다. */
+function warScore(k, v){
+  const d=dipOf(k); if(!d) return 0;
+  if(v!=null) d.score=clamp((d.score||0)+v, -100, 100);
+  return d.score||0;
+}
+function warScoreLabel(sc){
+  return sc>=35? '크게 이기고 있다' : sc>=12? '이기고 있다'
+       : sc>-12? '팽팽하다' : sc>-35? '밀리고 있다' : '크게 밀리고 있다';
+}
 function canGo(A, id){
   const P=G.provs[A.at]; if(!P) return false;
   return P.adj.has(id);
@@ -3051,7 +3123,8 @@ function provDef(P, 미는이){
     if(q && q.nat===P.nat && q.id!==(미는이&&미는이.at)) 원군 += q.army*0.20; });
   // 그 고을에 선 우군 야전군도 성을 지킨다
   const 지킴=armiesAt(P.id).filter(a=>a.nat===P.nat).reduce((s,a)=>s+a.men,0);
-  return (P.army+원군+지킴)*T.def*(1+P.fort*0.16)*V.def
+  const 혼란 = G.nations[P.nat] && G.nations[P.nat].chaos>0 ? 0.82 : 1;   // 왕조 교체기의 성은 무르다
+  return (P.army+원군+지킴)*T.def*(1+P.fort*0.16)*V.def*혼란
          *(P.nat==='kor'? mods().defKor : 1)*(1+techOf(P.nat)/220);
 }
 /* 야전 — 같은 고을에서 마주친 두 군 */
@@ -3076,6 +3149,9 @@ function fieldBattle(A, B2){
       + natName(이긴.nat)+이가(natName(이긴.nat))+' 이겼다. ('+natName(진.nat)+'의 '+num(진.men)+' 흩어짐)');
   G.armies=G.armies.filter(x=>x!==진);
   if(G.armySel===진.id) G.armySel=null;
+  // 전세 — 조선이 낀 야전이면 쌓는다
+  if(이긴.nat==='kor' && DIP_NATS.includes(진.nat)) warScore(진.nat, +8);
+  if(진.nat==='kor' && DIP_NATS.includes(이긴.nat)) warScore(이긴.nat, -8);
   if(진.nat==='kor'){ G.nations.kor.stab=clamp(G.nations.kor.stab-4,0,100); snd('lose'); }
   if(G.saga) G.saga.fields=(G.saga.fields||0)+1;
   return 이긴;
@@ -3150,7 +3226,9 @@ function siegeTick(무리, B){
     if(A0.nat==='kor'){
       G.legit=clamp(G.legit+2,0,100); sagaDo('takeWin', P.nm);
       if(G.reign) G.reign.얻음++;
+      if(DIP_NATS.includes(옛)) warScore(옛, +18);
     } else if(옛==='kor'){
+      if(DIP_NATS.includes(A0.nat)) warScore(A0.nat, -18);
       G.nations.kor.stab=clamp(G.nations.kor.stab-12,0,100);
       G.legit=clamp(G.legit-5,0,100);
       sagaDo('lost', P.nm); if(G.reign) G.reign.뺏김++;
@@ -3341,13 +3419,24 @@ function dipActs(k){
           // 한쪽과 손을 잡으면 다른 쪽이 등을 돌린다
           const o=DIP_NATS.find(x=>x!==k); if(o&&dipOf(o)) dipOf(o).rel=clamp(dipOf(o).rel-22,-100,100);
           log(natName(k)+과와(natName(k))+' 동맹을 맺었다.'); } } },
-    { id:'peace', nm:'화친', adm:2, cost:Math.round(260*물가),
+    { id:'peace', nm:'화친', adm:2,
+      cost: (d&&(d.score||0)>=12)? 0 : Math.round(260*물가*((d&&(d.score||0)<=-12)?1.6:1)),
       can:()=>!!d && d.war,
-      desc:()=>'싸움을 끝낸다.  국고를 치르고 정통 −5.  여덟 해 동안 다시 치지 않는다.',
-      run:()=>{ d.war=false; d.warYears=0; d.truce=8;
+      desc:()=>{ const sc=d.score||0;
+        if(sc>=35) return '전세 +'+Math.round(sc)+' — '+warScoreLabel(sc)+'.  배상 '+num(600+Math.round(sc*14))+'전을 받고 정통 +4.';
+        if(sc>=12) return '전세 +'+Math.round(sc)+' — '+warScoreLabel(sc)+'.  값 없이 끝낸다. 정통은 깎이지 않는다.';
+        if(sc>-12) return '전세 '+Math.round(sc)+' — '+warScoreLabel(sc)+'.  국고를 치르고 정통 −5.';
+        return '전세 '+Math.round(sc)+' — '+warScoreLabel(sc)+'.  비싼 값을 치르고 정통 −8. 진 싸움의 화친이다.'; },
+      run:()=>{ const sc=d.score||0;
+        d.war=false; d.warYears=0; d.truce=8; d.score=0;
         d.rel=clamp(d.rel+25,-100,100);
-        G.legit=clamp(G.legit-5,0,100);
-        log(natName(k)+'과 화친하였다.'); } },
+        if(sc>=35){ const 상=600+Math.round(sc*14); G.nations.kor.gold+=상;
+          G.legit=clamp(G.legit+4,0,100);
+          log(natName(k)+이가(natName(k))+' 배상 '+num(상)+'전을 물고 화친을 청해 왔다.'); }
+        else if(sc>=12) log(natName(k)+과와(natName(k))+' 대등하게 화친하였다.');
+        else if(sc>-12){ G.legit=clamp(G.legit-5,0,100); log(natName(k)+'과 화친하였다.'); }
+        else { G.legit=clamp(G.legit-8,0,100);
+          log('진 싸움을 값을 치르고 끝냈다. '+natName(k)+'의 기세가 등등하다.'); } } },
     { id:'denounce', nm:'국서로 꾸짖는다', adm:1, cost:Math.round(40*물가),
       can:()=>!!d && !d.ally,
       desc:()=>'사이 −14.  다른 이웃과의 사이 +8, 정통 +3.  명분은 값이 싸지 않다.',
@@ -3552,6 +3641,14 @@ function advice(){
                          if(p){ G.sel=p; G.mapFocus='korea'; } }
                  : ()=>{ G.tab='기술'; });
   }
+
+  /* 왕조 교체기 — 역사가 조선에 준 몇 안 되는 틈 */
+  DIP_NATS.forEach(k=>{
+    const N2=G.nations[k];
+    if(N2 && N2.chaos>0) 더(78, natName(k)+' 땅이 어지럽다 — '+N2.chaos+'해의 틈',
+      '왕조가 갈리는 중이라 군을 내지 못하고 성이 무르다(수비 −18%). 칠 것이면 지금이고, 아니면 성을 쌓아 둘 때다.',
+      ()=>{ G.tab='외교'; });
+  });
 
   /* 이웃끼리의 사이 — 틈이 열렸는지, 사이에 끼었는지 */
   const C=G.cj;
@@ -5978,7 +6075,12 @@ function sideDiplomacy(g,x,y,w){
 
     /* 조약 표 */
     let cx2=x, cy2=yy+24;
-    if(d.war)     cx2+=chip(g,cx2,cy2,'전쟁','#c4534a');
+    if(d.war){    cx2+=chip(g,cx2,cy2,'전쟁 '+d.warYears+'해','#c4534a');
+      const sc=Math.round(d.score||0);
+      cx2+=chip(g,cx2,cy2,'전세 '+(sc>0?'+':'')+sc, sc>=12?'#8fa86a': sc<=-12?'#c4534a':'#c9bfa8');
+      if(inRect(Mouse,{x:x,y:cy2-12,w:220,h:18}))
+        G.tip='전세 — 야전과 함락이 쌓인다. '+warScoreLabel(sc)+'. 이기고 있으면 화친에서 배상을 받는다.';
+    }
     if(d.truce>0) cx2+=chip(g,cx2,cy2,'휴전 '+d.truce+'년','#9fd0e8');
     if(d.envoy>0)  cx2+=chip(g,cx2,cy2,'사신 '+d.envoy+'년','#9fd0e8');
     if(d.tribute) cx2+=chip(g,cx2,cy2,'세폐','#c9a24a');
@@ -6538,6 +6640,7 @@ function drawChoice(g){
     });
     hz(x+30,by,w-60,bh, ()=>{
       applyEffects(c.e||{});
+      if(c.fn){ try{ c.fn(); }catch(e){} }   // 숫자로 적을 수 없는 몫 — 강화·휴전 같은 것
       log('「'+E.t+'」 — '+c.t);
       G.popup={ kind:'result', title:E.t, body:c.r, y:G.year };
     });
@@ -6766,6 +6869,8 @@ const HELP=[
    ['p','출정으로 세운 군은 판 위에 깃발로 선다. 깃발을 누르면 갈 수 있는 고을이 빛나고, 그 고을을 누르면 그리로 간다. 한 해에 한 걸음씩 간다.'],
    ['d','야전','한 고을에서 두 나라의 군이 만나면 그 자리에서 붙는다. 이긴 쪽만 남는다.'],
    ['d','포위','남의 성에 닿으면 해마다 조금씩 민다. 100이 되면 함락이다. 한 성에 우리 군이 여럿 서면 힘을 합쳐 민다 — 3만 셋은 9만 하나와 똑같다. 고을 판의 「수비」를 보고 그 두세 배를 모으면 서너 해에 넘어온다.'],
+   ['d','전세','야전과 함락이 전세에 쌓인다. 이기고 있으면 화친에서 배상을 받고, 지고 있으면 비싼 값을 치른다. 크게 이기면 저쪽이 먼저 강화 사절을 보내온다.'],
+   ['d','왕조 교체기','이웃의 왕조가 갈리는 몇 해 동안 그 땅은 어지럽다 — 군을 내지 못하고 성이 무르다. 역사가 조선에 준 몇 안 되는 틈이다.'],
    ['d','군량','판 위의 군은 해마다 줄고 곡식을 먹는다. 남의 땅에서는 더 빨리 녹는다.'],
    ['p','세워 두고 잊으면 그 자리에서 사라진다. 갈 곳을 정하거나, 제 땅에서 풀어 수비병으로 되돌린다.'],
    ['-'],
