@@ -45,10 +45,10 @@
    한·중·일 삼국 대전략
    v0.1.0
    ========================================================================= */
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 /* 예전 판으로 저장한 것도 규칙이 어긋나지 않으면 계속 읽는다.
    판을 올릴 때마다 남의 판을 버리게 하면, 판을 올리기가 무서워진다. */
-const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2','1.1.0','1.2.0'];
+const SAVE_OK = ['0.3.0','0.4.0','0.4.1','0.4.2','0.5.0','0.6.0','0.7.0','0.8.0','0.9.0','0.9.1','0.9.2','0.9.3','1.0.0','1.0.1','1.0.2','1.1.0','1.2.0','1.3.0'];
 function saveUsable(v){ return SAVE_OK.indexOf(v)>=0; }
 const MAP_MODE_PARAM=new URLSearchParams(location.search).get('map');
 const START_MAP_MODE=MAP_MODE_PARAM==='political'?'political':'terrain';
@@ -551,7 +551,9 @@ const NATIONS={
   kor:{ nm:'조선', col:'#7186c2', col2:'#425a94', names:['조선','조선','대한제국','대한제국','조선총독부','대한민국','대한민국','대한민국'] },
   chn:{ nm:'명',   col:'#d1b65c', col2:'#927b31', names:['명','명','청','청','청','중화민국','중화인민공화국','중화인민공화국'] },
   jpn:{ nm:'일본', col:'#70967f', col2:'#466c58', names:['무로마치','도요토미','에도','메이지','일본제국','일본','일본','일본'] },
-  ind:{ nm:'독립',  col:'#6f8a72', col2:'#51684f', names:['유구','유구','유구','유구','유구','유구','유구','유구'] }
+  ind:{ nm:'독립',  col:'#6f8a72', col2:'#51684f', names:['유구','유구','유구','유구','유구','유구','유구','유구'] },
+  /* 반군 — 조선의 본토 고을이 등을 돌리면 여기로 선다. */
+  reb:{ nm:'반군',  col:'#a0523f', col2:'#7a3a2c', names:['반군','반군','반군','민란군','의병','반군','반군','반군'] }
 };
 function natName(k){ const n=NATIONS[k]; return n.names[Math.min(n.names.length-1,G.era)]; }
 
@@ -1963,11 +1965,13 @@ function endTurn(){
       if(P.unrest>=등돌림){ P.rebel=(P.rebel||0)+1; } else P.rebel=Math.max(0,(P.rebel||0)-1);
       if(P.rebel>=참는햇수 && !P.cap && !B.rebelled){
         B.rebelled=1;
-        // 점령지는 제 나라로 돌아간다 — 남의 백성은 남의 임금을 부른다
-        const 돌아갈곳 = (!isCore(P) && P.home!=='kor' && G.nations[P.home])? P.home : 'ind';
-        P.nat=돌아갈곳; P.unrest=40; P.rebel=0; P.assim=0; P.army=Math.round(P.army*0.6);
+        // 점령지는 제 나라로 돌아간다 — 남의 백성은 남의 임금을 부른다.
+        // 본토가 등을 돌리면 반군이 된다 — 유구 백성이 되는 것이 아니다.
+        const 돌아갈곳 = (!isCore(P) && P.home!=='kor' && G.nations[P.home])? P.home : 'reb';
+        P.nat=돌아갈곳; P.unrest=70; P.rebel=0; P.assim=0; P.army=Math.round(P.army*0.6);
+        if(돌아갈곳==='reb') P.rebFire=ri(4,8);   // 이 몇 해 동안 번진다
         G.plateDirty=true;
-        log(돌아갈곳==='ind'? (P.nm+이가(P.nm)+' 조정을 등졌다.')
+        log(돌아갈곳==='reb'? (P.nm+이가(P.nm)+' 조정을 등지고 반군이 일어섰다.')
                             : (P.nm+이가(P.nm)+' '+natName(돌아갈곳)+으로(natName(돌아갈곳))+' 돌아섰다.'));
         fxFlip(P, 'kor', P.nm+' 반란', '#c4534a'); shake(0.7); snd('revolt');
         B.events.push(P.nm+' 반란');
@@ -2196,6 +2200,7 @@ function endTurn(){
   sagaTick(B);
   /* 치세의 장부 — 이 임금이 맡은 동안의 몫만 센다 */
   if(G.reign){ G.reign.해++; G.reign.stab += N.stab; }
+  rebTurn(B);
   armyTurn(B);
   worksTurn(B);
   reignTurn(B);
@@ -3236,6 +3241,61 @@ function siegeTick(무리, B){
     }
   }
 }
+/* ================================================================
+   반군의 한 해
+   ----------------------------------------------------------------
+   예전에는 등을 돌린 고을이 '유구'가 되어 영영 가만히 앉아 있었다.
+   반란이 아니라 실종이었다. 이제 반군은 몇 해 동안 번진다 — 이웃을
+   들쑤시고, 군을 내어 약한 고을을 문다. 그리고 식는다. 어지러움이
+   가라앉은 반군 고을은 스스로 조정에 돌아온다.
+   칼로 되찾는 길과 달래서 되돌리는 길이 함께 있다.
+   ================================================================ */
+function rebTurn(B){
+  const 반군땅=Object.values(G.provs).filter(p=>p.nat==='reb');
+  if(!G.nations.reb) return;
+  if(!반군땅.length){ G.nations.reb.tech=G.nations.kor.tech; return; }
+  // 반군의 기술은 조선을 따라온다 — 같은 백성이다
+  G.nations.reb.tech=+(G.nations.kor.tech*0.9).toFixed(1);
+  const 반군군=armyList('reb');
+  반군땅.forEach(P=>{
+    if(P.rebFire>0){
+      P.rebFire--;
+      P.unrest=clamp(P.unrest+2,0,100);
+      // 무리가 불어난다 — 키우기만 한다. min 으로 씌우면 작은 고을의
+      // 반군이 출몰 문턱(4천) 아래로 깎여 영영 나오지 못한다.
+      P.army=Math.max(P.army, Math.min(Math.round(garrisonTarget(P)*2.2), P.army+ri(300,700)));
+      // 불길 — 맞닿은 조선 고을이 들썩인다
+      [...P.adj].forEach(id=>{ const q=G.provs[id];
+        if(q && q.nat==='kor'){ q.unrest=clamp(q.unrest+4,0,100); } });
+      // 군을 내어 가장 약한 이웃을 문다 — 판에 둘까지만
+      if(반군군.length<2 && P.army>4000 && Math.random()<0.45){
+        const 목=[...P.adj].map(id=>G.provs[id])
+          .filter(q=>q&&q.nat==='kor')
+          .sort((x,y2)=>provDef(x,null)-provDef(y2,null))[0];
+        if(목){
+          const men=Math.round(P.army*0.55); P.army-=men;
+          const A={ id:ARMY_ID++, nat:'reb', at:P.id, dest:null, men, siege:0, mv:0, born:G.year };
+          G.armies.push(A); orderMove(A, 목.id);
+          log(natName('reb')+이가(natName('reb'))+' '+P.nm+'에서 나와 '+목.nm+을를(목.nm)+' 노린다.');
+          B.events.push(P.nm+' 반군 출몰'); snd('revolt');
+        }
+      }
+    } else {
+      // 불이 꺼지면 식는다
+      P.unrest=clamp(P.unrest-3,0,100);
+      // 조정의 명분이 설수록 빨리 식는다
+      if(G.legit>=60) P.unrest=clamp(P.unrest-1,0,100);
+      if(P.home==='kor' && P.unrest<30){
+        P.nat='kor'; P.unrest=45; P.rebel=0; G.plateDirty=true; ROUTEKEY='';
+        log(P.nm+이가(P.nm)+' 스스로 조정에 돌아왔다. 사면을 내렸다.');
+        B.events.push(P.nm+' 귀순');
+        fxFlip(P, 'reb', P.nm+' 귀순', '#8fa86a'); snd('treaty');
+        G.legit=clamp(G.legit+2,0,100);
+      }
+    }
+  });
+}
+
 /* 한 해 — 움직이고, 부딪히고, 줄어든다 */
 function armyTurn(B){
   if(!G.armies) G.armies=[];
@@ -3640,6 +3700,17 @@ function advice(){
       볼곳.length? ()=>{ const p=볼곳.find(id=>G.provs[id]&&G.provs[id].nat==='kor');
                          if(p){ G.sel=p; G.mapFocus='korea'; } }
                  : ()=>{ G.tab='기술'; });
+  }
+
+  /* 반군 — 번지기 전에 잡거나 달래야 한다 */
+  {
+    const 반=Object.values(G.provs).filter(p=>p.nat==='reb');
+    if(반.length){
+      const 불=반.filter(p=>p.rebFire>0).length;
+      더(불? 90:62, '반군이 일어섰다 — '+반.length+'곳'+(불? ' (번지는 중 '+불+')':''),
+        '칼로 치면 빠르지만 백성이 상하고, 사면과 회유로 달래면 스스로 돌아온다. 고을을 골라 회유하거나 군을 보낸다.',
+        ()=>{ G.sel=반[0].id; G.mapFocus='korea'; });
+    }
   }
 
   /* 왕조 교체기 — 역사가 조선에 준 몇 안 되는 틈 */
@@ -4416,7 +4487,8 @@ function drawTop(g){
    ================================================================ */
 const PAL={ paper:'#e7ddc4', ink:'#2c2822', gold:'#8a6a2f', red:'#9d3b32' };
 const WASH={ kor:'rgba(79,127,181,.26)', chn:'rgba(181,101,79,.24)',
-             jpn:'rgba(138,111,174,.24)', ind:'rgba(111,138,114,.24)' };
+             jpn:'rgba(138,111,174,.24)', ind:'rgba(111,138,114,.24)',
+             reb:'rgba(160,82,63,.26)' };
 /* 강 — 격자 좌표 폴리라인 */
 const RIVERS=[
   [[47,11],[50,11],[53,10],[56,11]],                      // 압록·두만
@@ -6449,6 +6521,26 @@ function drawBottom(g){
         bar(g,sx,y+28,남폭,10, 1-P.unrest/100, P.unrest>50?'#c4534a':'#8fa86a');
       }
     }
+    /* 반군 고을 — 칼이 아니라 쌀로도 되찾을 수 있다 */
+    if(P.nat==='reb' && P.home==='kor'){
+      const N2=G.nations.kor;
+      const 값=Math.round(220*(1+G.era*0.5)), 손있다=(N2.adm||0)>=1, 돈있다=N2.gold>=값;
+      const 되나=손있다&&돈있다&&!G.ended;
+      const by2= LAY.phone? y+h-52 : y+62;
+      btn(g, x+w-176, by2, 164, 30, '사면과 회유  '+num(값)+'전', false, 되나? ()=>{
+        N2.gold-=값; N2.adm--;
+        P.unrest=clamp(P.unrest-24,0,100);
+        log(P.nm+'에 사면장과 곡식을 보냈다. 성난 마음이 조금 가라앉는다 (어지러움 '+Math.round(P.unrest)+').');
+        fxPop(P.id,'회유','#8fa86a'); snd('relief');
+      } : null, !되나);
+      g.fillStyle='rgba(150,145,135,.7)'; g.font='10px serif'; g.textAlign='right';
+      g.fillText('어지러움 30 아래면 스스로 돌아온다 · 정무 1', x+w-14, by2+42);
+      g.textAlign='left';
+      if(inRect(Mouse,{x:x+w-176,y:by2,w:164,h:30}))
+        G.tip='어지러움 −24. 지금 '+Math.round(P.unrest)+'. 불길이 잡힌 반군 고을은 어지러움이 30 아래로 내리면 스스로 조정에 돌아온다. 칼로 치면 빠르지만 백성이 상한다.'
+             +(손있다?'':'  · 정무가 없다')+(돈있다?'':'  · 국고가 모자란다');
+    }
+
     // 명령
     const N=G.nations.kor;
     const 열 = LAY.phone? 3 : ACTIONS.length;
@@ -6874,6 +6966,11 @@ const HELP=[
    ['d','군량','판 위의 군은 해마다 줄고 곡식을 먹는다. 남의 땅에서는 더 빨리 녹는다.'],
    ['p','세워 두고 잊으면 그 자리에서 사라진다. 갈 곳을 정하거나, 제 땅에서 풀어 수비병으로 되돌린다.'],
    ['-'],
+   ['h','반군'],
+   ['p','민심이 무너져 등을 돌린 본토 고을은 반군이 된다. 몇 해 동안 번진다 — 이웃 고을이 들썩이고 반군의 군이 나와 약한 고을을 문다. 불이 꺼진 뒤에는 식는다.'],
+   ['d','칼','군을 보내 포위해 되찾는다. 빠르지만 백성이 상하고 어지러움이 크게 남는다.'],
+   ['d','쌀','반군 고을을 골라 「사면과 회유」를 쓴다. 어지러움이 30 아래로 내리면 스스로 돌아온다.'],
+   ['-'],
    ['h','점령지'],
    ['p','빼앗은 고을은 얼마 동안 남의 땅이다. 세와 곡식이 절반만 걷히고 어지러움이 절로 오른다. 지고 갈 수 있는 것보다 많이 쥐면 해마다 민심과 정통이 깎인다.'] ]
 ];
@@ -7289,6 +7386,9 @@ function loadGame(slot){
     G.saga=Object.assign(newSaga(), d.saga||{});
     G.armies=d.armies||[]; G.armySel=null;
     G.works=d.works||{done:{},b:null};
+    /* 1.3.0 앞의 저장에는 반군 세력이 없다 */
+    if(!G.nations.reb) G.nations.reb={ id:'reb', gold:0, food:0, tech:G.nations.kor.tech,
+      pop:0, army:0, prov:0, stab:50, adm:0 };
     ARMY_ID=d.armyId || (G.armies.reduce((m,a)=>Math.max(m,a.id),0)+1);
     if(d.tab && TABS.includes(d.tab)) G.tab=d.tab;
     if(d.view) G.view=d.view;
