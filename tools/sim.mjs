@@ -438,6 +438,15 @@ const PLANS = {
         api.call('togglePolicy', P);
       }
 
+      /* 나라의 큰 일 — 국고가 두터우면 도감을 연다 (v1.1.0) */
+      try{
+        const WORKS = api.get('WORKS');
+        if(WORKS && !G.works.b){
+          const W = WORKS.find(w => !G.works.done[w.id] && G.era >= w.era && N.gold >= w.cost*1.6);
+          if(W) api.call('startWork', W);
+        }
+      }catch(e){ /* 옛 판에는 없다 */ }
+
       /* 명령 — 정무가 남는 동안 값이 싼 것부터 */
       const ACTIONS = api.get('ACTIONS');
       const natProvs = n => api.call('natProvs', n);
